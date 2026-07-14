@@ -31,8 +31,9 @@ export const volumeFragmentShader = /* glsl */ `
   uniform float uLevel;
   uniform float uSteps;
   uniform float uShading;
-  uniform float uClip;
-  uniform vec4 uCrop;
+  uniform float uSharpness;
+  uniform vec3 uCropMin;
+  uniform vec3 uCropMax;
 
   float monotonicSlope(float before, float after) {
     if (before * after <= 0.0) return 0.0;
@@ -105,8 +106,7 @@ export const volumeFragmentShader = /* glsl */ `
       float rayJitter = fract(52.9829189 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y));
       vec3 position = vOrigin + rayDirection * (bounds.x + (float(index) + rayJitter) * stepLength);
       vec3 uvw = position / uSize + 0.5;
-      if (uvw.z > uClip) continue;
-      if (uvw.x < uCrop.x || uvw.x > uCrop.y || uvw.y < uCrop.z || uvw.y > uCrop.w) continue;
+      if (any(lessThan(uvw, uCropMin)) || any(greaterThan(uvw, uCropMax))) continue;
 
       float rawValue = sampleVolume(uvw);
       float windowLow = uLevel - uWindow * 0.5;
@@ -120,6 +120,9 @@ export const volumeFragmentShader = /* glsl */ `
           sampleVolume(uvw + vec3(0.0, voxel.y, 0.0)) - rawValue,
           sampleVolume(uvw + vec3(0.0, 0.0, voxel.z)) - rawValue
         );
+        float edgeBoost = clamp(length(gradient) * uSharpness * 1.5, 0.0, 0.24);
+        value = clamp(value + edgeBoost, 0.0, 1.0);
+        structure = smoothstep(uThreshold, min(1.0, uThreshold + 0.16), value);
         vec3 normal = normalize(gradient + vec3(0.0001));
         float light = mix(1.0, 0.58 + 0.42 * abs(dot(normal, -rayDirection)), uShading);
         float sampleAlpha = 1.0 - exp(-structure * uOpacity * stepLength * 14.0);

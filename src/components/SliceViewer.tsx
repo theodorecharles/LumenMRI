@@ -161,13 +161,15 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         const maxX = Math.max(interaction.startX, point.x)
         const minY = Math.min(interaction.startY, point.y)
         const maxY = Math.max(interaction.startY, point.y)
-        if (maxX - minX >= minimum && maxY - minY >= minimum) onCropChange({ minX, maxX, minY, maxY })
+        if (maxX - minX >= minimum && maxY - minY >= minimum) {
+          onCropChange({ ...cropBounds, minX, maxX, minY, maxY })
+        }
       } else if (interaction.type === 'move') {
         const width = interaction.bounds.maxX - interaction.bounds.minX
         const height = interaction.bounds.maxY - interaction.bounds.minY
         const minX = Math.max(0, Math.min(1 - width, interaction.bounds.minX + point.x - interaction.startX))
         const minY = Math.max(0, Math.min(1 - height, interaction.bounds.minY + point.y - interaction.startY))
-        onCropChange({ minX, maxX: minX + width, minY, maxY: minY + height })
+        onCropChange({ ...cropBounds, minX, maxX: minX + width, minY, maxY: minY + height })
       } else {
         const next = { ...interaction.bounds }
         if (interaction.corner.includes('w')) next.minX = Math.min(point.x, next.maxX - minimum)
@@ -178,7 +180,9 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       }
     }
 
-    const cropped = cropBounds.minX > 0.001 || cropBounds.maxX < 0.999 || cropBounds.minY > 0.001 || cropBounds.maxY < 0.999
+    const cropped = cropBounds.minX > 0.001 || cropBounds.maxX < 0.999 ||
+      cropBounds.minY > 0.001 || cropBounds.maxY < 0.999 ||
+      cropBounds.minZ > 0.001 || cropBounds.maxZ < 0.999
 
     return (
       <section
@@ -271,7 +275,14 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                 type="button"
                 aria-label="Reset volume crop"
                 title="Reset volume crop"
-                onClick={() => onCropChange({ minX: 0, maxX: 1, minY: 0, maxY: 1 })}
+                onClick={() => onCropChange({
+                  minX: 0,
+                  maxX: 1,
+                  minY: 0,
+                  maxY: 1,
+                  minZ: 0,
+                  maxZ: 1,
+                })}
               >
                 <RotateCcw size={13} />
               </button>

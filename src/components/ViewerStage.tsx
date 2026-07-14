@@ -4,6 +4,7 @@ import {
   useImperativeHandle,
   useRef,
   useState,
+  type PointerEvent as ReactPointerEvent,
 } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
@@ -32,6 +33,8 @@ interface ViewerStageProps {
   sliceIndex: number
   showSliceHighlight: boolean
   cropBounds: CropBounds
+  cropEditing: boolean
+  onCropChange: (bounds: CropBounds) => void
 }
 
 interface Runtime {
@@ -47,15 +50,121 @@ interface Runtime {
   sliceHighlight: THREE.Group | null
   sliceMaterial: THREE.ShaderMaterial | null
   sliceTexture: THREE.DataTexture | null
+  cropOutline: THREE.LineSegments | null
   volumeSize: [number, number, number]
   cropBounds: CropBounds
-  visibleDepth: number
   selectedSliceFraction: number
   sliceHighlightRequested: boolean
   currentSeriesId: string | null
   needsRender: boolean
   frame: number
   resizeObserver: ResizeObserver
+}
+
+type CropAxis = 'x' | 'y' | 'z'
+type CropBound = keyof CropBounds
+
+interface CropHandleDefinition {
+  id: string
+  axis: CropAxis
+  bound: CropBound
+  label: string
+  shortLabel: string
+}
+
+interface CropDrag {
+  pointerId: number
+  axis: CropAxis
+  bound: CropBound
+  startX: number
+  startY: number
+  screenAxisX: number
+  screenAxisY: number
+  pixelsPerFraction: number
+  bounds: CropBounds
+}
+
+const CROP_HANDLES: CropHandleDefinition[] = [
+  { id: 'min-x', axis: 'x', bound: 'minX', label: 'Drag left crop face', shortLabel: 'X−' },
+  { id: 'max-x', axis: 'x', bound: 'maxX', label: 'Drag right crop face', shortLabel: 'X+' },
+  { id: 'min-y', axis: 'y', bound: 'minY', label: 'Drag top crop face', shortLabel: 'Y−' },
+  { id: 'max-y', axis: 'y', bound: 'maxY', label: 'Drag bottom crop face', shortLabel: 'Y+' },
+  { id: 'min-z', axis: 'z', bound: 'minZ', label: 'Drag near depth crop face', shortLabel: 'Z−' },
+  { id: 'max-z', axis: 'z', bound: 'maxZ', label: 'Drag far depth crop face', shortLabel: 'Z+' },
+]
+
+const clamp = (value: number, minimum: number, maximum: number) =>
+  Math.max(minimum, Math.min(maximum, value))
+
+function isCropped(bounds: CropBounds) {
+  return bounds.minX > 0.001 || bounds.maxX < 0.999 ||
+    bounds.minY > 0.001 || bounds.maxY < 0.999 ||
+    bounds.minZ > 0.001 || bounds.maxZ < 0.999
+}
+
+function cropBoxTransform(runtime: Runtime) {
+  const [sizeX, sizeY, sizeZ] = runtime.volumeSize
+  const bounds = runtime.cropBounds
+  const scale = new THREE.Vector3(
+    (bounds.maxX - bounds.minX) * sizeX,
+    (bounds.maxY - bounds.minY) * sizeY,
+    (bounds.maxZ - bounds.minZ) * sizeZ,
+  )
+  const center = new THREE.Vector3(
+    ((bounds.minX + bounds.maxX) * 0.5 - 0.5) * sizeX,
+    (0.5 - (bounds.minY + bounds.maxY) * 0.5) * sizeY,
+    ((bounds.minZ + bounds.maxZ) * 0.5 - 0.5) * sizeZ,
+  )
+  return { center, scale }
+}
+
+function cropHandleLocalPosition(runtime: Runtime, handle: CropHandleDefinition) {
+  const { center } = cropBoxTransform(runtime)
+  const [sizeX, sizeY, sizeZ] = runtime.volumeSize
+  const bounds = runtime.cropBounds
+  if (handle.bound === 'minX') center.x = (bounds.minX - 0.5) * sizeX
+  else if (handle.bound === 'maxX') center.x = (bounds.maxX - 0.5) * sizeX
+  else if (handle.bound === 'minY') center.y = (0.5 - bounds.minY) * sizeY
+  else if (handle.bound === 'maxY') center.y = (0.5 - bounds.maxY) * sizeY
+  else if (handle.bound === 'minZ') center.z = (bounds.minZ - 0.5) * sizeZ
+  else center.z = (bounds.maxZ - 0.5) * sizeZ
+  return center
+}
+
+function projectToCanvas(runtime: Runtime, world: THREE.Vector3) {
+  const projected = world.project(runtime.camera)
+  const canvas = runtime.renderer.domElement
+  return {
+    x: (projected.x * 0.5 + 0.5) * canvas.clientWidth,
+    y: (-projected.y * 0.5 + 0.5) * canvas.clientHeight,
+    visible: projected.z >= -1 && projected.z <= 1,
+  }
+}
+
+function updateCropOutline(runtime: Runtime, editing: boolean) {
+  if (!runtime.cropOutline) return
+  const { center, scale } = cropBoxTransform(runtime)
+  runtime.cropOutline.position.copy(center)
+  runtime.cropOutline.scale.copy(scale)
+  runtime.cropOutline.visible = editing || isCropped(runtime.cropBounds)
+}
+
+function updateCropHandlePositions(
+  runtime: Runtime,
+  handles: Record<string, HTMLButtonElement | null>,
+) {
+  if (!runtime.volumeRoot) return
+  runtime.volumeRoot.updateWorldMatrix(true, false)
+  for (const handle of CROP_HANDLES) {
+    const element = handles[handle.id]
+    if (!element) continue
+    const world = cropHandleLocalPosition(runtime, handle)
+      .applyMatrix4(runtime.volumeRoot.matrixWorld)
+    const screen = projectToCanvas(runtime, world)
+    element.style.left = `${screen.x}px`
+    element.style.top = `${screen.y}px`
+    element.style.visibility = screen.visible ? 'visible' : 'hidden'
+  }
 }
 
 function paletteColors(settings: VolumeSettings) {
@@ -84,7 +193,7 @@ function visibleRadius(runtime: Runtime) {
   const [sizeX, sizeY, sizeZ] = runtime.volumeSize
   const cropWidth = (runtime.cropBounds.maxX - runtime.cropBounds.minX) * sizeX
   const cropHeight = (runtime.cropBounds.maxY - runtime.cropBounds.minY) * sizeY
-  const cropDepth = runtime.visibleDepth * sizeZ
+  const cropDepth = (runtime.cropBounds.maxZ - runtime.cropBounds.minZ) * sizeZ
   return Math.max(0.05, Math.hypot(cropWidth, cropHeight, cropDepth) * 0.5)
 }
 
@@ -133,7 +242,7 @@ function recenterVisibleVolume(runtime: Runtime) {
   const localCenter = new THREE.Vector3(
     ((runtime.cropBounds.minX + runtime.cropBounds.maxX) * 0.5 - 0.5) * sizeX,
     (0.5 - (runtime.cropBounds.minY + runtime.cropBounds.maxY) * 0.5) * sizeY,
-    (runtime.visibleDepth * 0.5 - 0.5) * sizeZ,
+    ((runtime.cropBounds.minZ + runtime.cropBounds.maxZ) * 0.5 - 0.5) * sizeZ,
   )
   const worldCenter = localCenter.applyQuaternion(
     runtime.volumeRoot?.quaternion || new THREE.Quaternion(),
@@ -148,7 +257,9 @@ function recenterVisibleVolume(runtime: Runtime) {
 function updateSliceVisibility(runtime: Runtime) {
   if (!runtime.sliceHighlight) return
   runtime.sliceHighlight.visible =
-    runtime.sliceHighlightRequested && runtime.selectedSliceFraction <= runtime.visibleDepth + 0.0001
+    runtime.sliceHighlightRequested &&
+    runtime.selectedSliceFraction >= runtime.cropBounds.minZ - 0.0001 &&
+    runtime.selectedSliceFraction <= runtime.cropBounds.maxZ + 0.0001
 }
 
 function ensureCameraFits(runtime: Runtime) {
@@ -230,17 +341,125 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       sliceIndex,
       showSliceHighlight,
       cropBounds,
+      cropEditing,
+      onCropChange,
     },
     forwardedRef,
   ) {
     const containerRef = useRef<HTMLDivElement>(null)
     const runtimeRef = useRef<Runtime | null>(null)
     const autoRotateRef = useRef(autoRotate)
+    const cropHandleRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+    const cropDragRef = useRef<CropDrag | null>(null)
     const [renderError, setRenderError] = useState<string | null>(null)
 
     useEffect(() => {
       autoRotateRef.current = autoRotate
     }, [autoRotate])
+
+    useEffect(() => {
+      if (cropEditing) return
+      cropDragRef.current = null
+      if (runtimeRef.current) runtimeRef.current.controls.enabled = true
+    }, [cropEditing])
+
+    const beginCropDrag = (
+      event: ReactPointerEvent<HTMLButtonElement>,
+      handle: CropHandleDefinition,
+    ) => {
+      const runtime = runtimeRef.current
+      if (!runtime?.volumeRoot) return
+      runtime.volumeRoot.updateWorldMatrix(true, false)
+      const localStart = cropHandleLocalPosition(runtime, handle)
+      const localAxis = handle.axis === 'x'
+        ? new THREE.Vector3(1, 0, 0)
+        : handle.axis === 'y'
+          ? new THREE.Vector3(0, 1, 0)
+          : new THREE.Vector3(0, 0, 1)
+      const axisSize = handle.axis === 'x'
+        ? runtime.volumeSize[0]
+        : handle.axis === 'y'
+          ? runtime.volumeSize[1]
+          : runtime.volumeSize[2]
+      const probeFraction = 0.2
+      const worldStart = localStart.clone().applyMatrix4(runtime.volumeRoot.matrixWorld)
+      const worldEnd = localStart.clone()
+        .add(localAxis.multiplyScalar(axisSize * probeFraction))
+        .applyMatrix4(runtime.volumeRoot.matrixWorld)
+      const screenStart = projectToCanvas(runtime, worldStart)
+      const screenEnd = projectToCanvas(runtime, worldEnd)
+      let screenX = screenEnd.x - screenStart.x
+      let screenY = screenEnd.y - screenStart.y
+      let projectedLength = Math.hypot(screenX, screenY)
+      let pixelsPerFraction = projectedLength / probeFraction
+
+      if (pixelsPerFraction < 32) {
+        const fallback = Math.max(140, Math.min(
+          runtime.renderer.domElement.clientWidth,
+          runtime.renderer.domElement.clientHeight,
+        ) * 0.52)
+        screenX = handle.axis === 'x' ? fallback : 0
+        screenY = handle.axis === 'x' ? 0 : -fallback
+        projectedLength = fallback
+        pixelsPerFraction = fallback
+      }
+
+      cropDragRef.current = {
+        pointerId: event.pointerId,
+        axis: handle.axis,
+        bound: handle.bound,
+        startX: event.clientX,
+        startY: event.clientY,
+        screenAxisX: screenX / projectedLength,
+        screenAxisY: screenY / projectedLength,
+        pixelsPerFraction,
+        bounds: { ...cropBounds },
+      }
+      runtime.controls.enabled = false
+      event.currentTarget.setPointerCapture(event.pointerId)
+      event.preventDefault()
+      event.stopPropagation()
+    }
+
+    const updateCropDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+      const drag = cropDragRef.current
+      if (!drag || drag.pointerId !== event.pointerId) return
+      const screenDelta =
+        (event.clientX - drag.startX) * drag.screenAxisX +
+        (event.clientY - drag.startY) * drag.screenAxisY
+      let fractionDelta = screenDelta / drag.pixelsPerFraction
+      if (drag.axis === 'y') fractionDelta *= -1
+      const next = { ...drag.bounds }
+      const minimum = 0.035
+
+      if (drag.bound === 'minX') next.minX = clamp(drag.bounds.minX + fractionDelta, 0, drag.bounds.maxX - minimum)
+      else if (drag.bound === 'maxX') next.maxX = clamp(drag.bounds.maxX + fractionDelta, drag.bounds.minX + minimum, 1)
+      else if (drag.bound === 'minY') next.minY = clamp(drag.bounds.minY + fractionDelta, 0, drag.bounds.maxY - minimum)
+      else if (drag.bound === 'maxY') next.maxY = clamp(drag.bounds.maxY + fractionDelta, drag.bounds.minY + minimum, 1)
+      else if (drag.bound === 'minZ') next.minZ = clamp(drag.bounds.minZ + fractionDelta, 0, drag.bounds.maxZ - minimum)
+      else next.maxZ = clamp(drag.bounds.maxZ + fractionDelta, drag.bounds.minZ + minimum, 1)
+
+      onCropChange(next)
+      event.preventDefault()
+      event.stopPropagation()
+    }
+
+    const finishCropDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+      const drag = cropDragRef.current
+      if (!drag || drag.pointerId !== event.pointerId) return
+      cropDragRef.current = null
+      const runtime = runtimeRef.current
+      if (runtime) {
+        runtime.controls.enabled = true
+        recenterVisibleVolume(runtime)
+        runtime.needsRender = true
+      }
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+      event.preventDefault()
+      event.stopPropagation()
+    }
 
     useImperativeHandle(
       forwardedRef,
@@ -364,9 +583,16 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         sliceHighlight: null,
         sliceMaterial: null,
         sliceTexture: null,
+        cropOutline: null,
         volumeSize: [1, 1, 1],
-        cropBounds: { minX: 0, maxX: 1, minY: 0, maxY: 1 },
-        visibleDepth: 1,
+        cropBounds: {
+          minX: 0,
+          maxX: 1,
+          minY: 0,
+          maxY: 1,
+          minZ: 0,
+          maxZ: 1,
+        },
         selectedSliceFraction: 0,
         sliceHighlightRequested: false,
         currentSeriesId: null,
@@ -385,6 +611,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         container.dataset.cameraDistance = runtime.camera.position
           .distanceTo(runtime.controls.target)
           .toFixed(5)
+        updateCropHandlePositions(runtime, cropHandleRefs.current)
         if (controlsChanged || autoRotateRef.current || runtime.needsRender) {
           renderer.render(scene, runtime.camera)
           runtime.needsRender = false
@@ -460,12 +687,16 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
           uLevel: { value: volumeSettings.level },
           uSteps: { value: Math.round(112 + volumeSettings.detail * 320) },
           uShading: { value: volumeSettings.shading },
-          uClip: { value: volumeSettings.clip },
-          uCrop: { value: new THREE.Vector4(
+          uSharpness: { value: volumeSettings.sharpness },
+          uCropMin: { value: new THREE.Vector3(
             cropBounds.minX,
-            cropBounds.maxX,
             1 - cropBounds.maxY,
+            cropBounds.minZ,
+          ) },
+          uCropMax: { value: new THREE.Vector3(
+            cropBounds.maxX,
             1 - cropBounds.minY,
+            cropBounds.maxZ,
           ) },
         },
         side: THREE.BackSide,
@@ -476,6 +707,18 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       if (retainedQuaternion) root.quaternion.copy(retainedQuaternion)
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(size[0], size[1], size[2]), material)
       root.add(mesh)
+      const cropOutline = new THREE.LineSegments(
+        new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
+        new THREE.LineBasicMaterial({
+          color: 0x55e7f4,
+          transparent: true,
+          opacity: 0.88,
+          depthTest: false,
+          depthWrite: false,
+        }),
+      )
+      cropOutline.renderOrder = 18
+      root.add(cropOutline)
 
       const safeIndex = Math.max(0, Math.min(sourceDepth - 1, sliceIndex))
       const sourceSliceSize = sourceWidth * sourceHeight
@@ -561,7 +804,9 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         (0.5 - (cropBounds.minY + cropBounds.maxY) * 0.5) * size[1],
         (selectedSliceFraction - 0.5) * size[2],
       )
-      sliceHighlight.visible = showSliceHighlight && selectedSliceFraction <= volumeSettings.clip + 0.0001
+      sliceHighlight.visible = showSliceHighlight &&
+        selectedSliceFraction >= cropBounds.minZ - 0.0001 &&
+        selectedSliceFraction <= cropBounds.maxZ + 0.0001
       root.add(sliceHighlight)
       runtime.scene.add(root)
       runtime.volumeRoot = root
@@ -571,12 +816,13 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       runtime.sliceHighlight = sliceHighlight
       runtime.sliceMaterial = sliceMaterial
       runtime.sliceTexture = sliceTexture
+      runtime.cropOutline = cropOutline
       runtime.volumeSize = size
       runtime.cropBounds = cropBounds
-      runtime.visibleDepth = volumeSettings.clip
       runtime.selectedSliceFraction = selectedSliceFraction
       runtime.sliceHighlightRequested = showSliceHighlight
       runtime.currentSeriesId = volume.seriesId
+      updateCropOutline(runtime, cropEditing)
       recenterVisibleVolume(runtime)
       if (!sameSeries) positionCamera(runtime, 'perspective')
       runtime.needsRender = true
@@ -595,7 +841,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       material.uniforms.uLevel.value = volumeSettings.level
       material.uniforms.uSteps.value = Math.round(112 + volumeSettings.detail * 320)
       material.uniforms.uShading.value = volumeSettings.shading
-      material.uniforms.uClip.value = volumeSettings.clip
+      material.uniforms.uSharpness.value = volumeSettings.sharpness
       const sliceMaterial = runtimeRef.current?.sliceMaterial
       if (sliceMaterial) {
         sliceMaterial.uniforms.uWindow.value = volumeSettings.window
@@ -623,32 +869,48 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
 
     useEffect(() => {
       const runtime = runtimeRef.current
-      const crop = runtime?.volumeMaterial?.uniforms.uCrop.value as THREE.Vector4 | undefined
-      if (crop) {
-        crop.set(
-          cropBounds.minX,
-          cropBounds.maxX,
-          1 - cropBounds.maxY,
-          1 - cropBounds.minY,
-        )
-      }
+      const cropMin = runtime?.volumeMaterial?.uniforms.uCropMin.value as THREE.Vector3 | undefined
+      cropMin?.set(
+        cropBounds.minX,
+        1 - cropBounds.maxY,
+        cropBounds.minZ,
+      )
+      const cropMax = runtime?.volumeMaterial?.uniforms.uCropMax.value as THREE.Vector3 | undefined
+      cropMax?.set(
+        cropBounds.maxX,
+        1 - cropBounds.minY,
+        cropBounds.maxZ,
+      )
       if (runtime?.sliceHighlight) {
         const width = cropBounds.maxX - cropBounds.minX
         const height = cropBounds.maxY - cropBounds.minY
         runtime.sliceHighlight.scale.set(width, height, 1)
-        runtime.sliceHighlight.position.x = ((cropBounds.minX + cropBounds.maxX) * 0.5 - 0.5) * runtime.volumeSize[0]
-        runtime.sliceHighlight.position.y = (0.5 - (cropBounds.minY + cropBounds.maxY) * 0.5) * runtime.volumeSize[1]
+        runtime.sliceHighlight.position.x =
+          ((cropBounds.minX + cropBounds.maxX) * 0.5 - 0.5) * runtime.volumeSize[0]
+        runtime.sliceHighlight.position.y =
+          (0.5 - (cropBounds.minY + cropBounds.maxY) * 0.5) * runtime.volumeSize[1]
       }
       const sliceCrop = runtime?.sliceMaterial?.uniforms.uCrop.value as THREE.Vector4 | undefined
       sliceCrop?.set(cropBounds.minX, cropBounds.maxX, cropBounds.minY, cropBounds.maxY)
       if (runtime) {
         runtime.cropBounds = cropBounds
-        runtime.visibleDepth = volumeSettings.clip
+        runtime.renderer.domElement.parentElement?.setAttribute(
+          'data-crop-bounds',
+          [
+            cropBounds.minX,
+            cropBounds.maxX,
+            cropBounds.minY,
+            cropBounds.maxY,
+            cropBounds.minZ,
+            cropBounds.maxZ,
+          ].map((value) => value.toFixed(4)).join(','),
+        )
+        updateCropOutline(runtime, cropEditing)
         updateSliceVisibility(runtime)
-        recenterVisibleVolume(runtime)
+        if (!cropDragRef.current) recenterVisibleVolume(runtime)
         runtime.needsRender = true
       }
-    }, [cropBounds, volumeSettings.clip])
+    }, [cropBounds, cropEditing])
 
     return (
       <div className="viewer-canvas" ref={containerRef}>
@@ -656,6 +918,27 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
           <div className="viewer-error" role="alert">
             <span>GPU unavailable</span>
             <p>{renderError}</p>
+          </div>
+        ) : null}
+        {cropEditing ? (
+          <div className="crop-3d-controls" role="group" aria-label="3D crop box handles">
+            {CROP_HANDLES.map((handle) => (
+              <button
+                key={handle.id}
+                ref={(element) => { cropHandleRefs.current[handle.id] = element }}
+                className={`crop-face-handle crop-axis-${handle.axis}`}
+                type="button"
+                aria-label={handle.label}
+                title={handle.label}
+                onPointerDown={(event) => beginCropDrag(event, handle)}
+                onPointerMove={updateCropDrag}
+                onPointerUp={finishCropDrag}
+                onPointerCancel={finishCropDrag}
+              >
+                {handle.shortLabel}
+              </button>
+            ))}
+            <div className="crop-3d-help">Drag faces to crop · Orbit outside the box</div>
           </div>
         ) : null}
         <div className="view-cube" role="group" aria-label="Anatomical view cube">

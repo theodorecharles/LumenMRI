@@ -56,7 +56,7 @@ export interface VolumeSettings {
   level: number
   detail: number
   shading: number
-  clip: number
+  sharpness: number
   palette: PaletteName
   customPalette: [string, string, string]
 }
@@ -66,6 +66,8 @@ export interface CropBounds {
   maxX: number
   minY: number
   maxY: number
+  minZ: number
+  maxZ: number
 }
 
 export type WorkerRequest =

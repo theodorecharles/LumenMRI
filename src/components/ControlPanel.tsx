@@ -1,5 +1,5 @@
 import { Layers3, SlidersHorizontal, Sparkles } from 'lucide-react'
-import type { PaletteName, VolumeSettings } from '../types'
+import type { CropBounds, PaletteName, VolumeSettings } from '../types'
 import { PALETTES } from '../lib/volume'
 import { RangeControl } from './RangeControl'
 import type { CameraProjection, CameraView } from './ViewerStage'
@@ -12,6 +12,8 @@ interface ControlPanelProps {
   reconstructionEnabled: boolean
   reconstructionReady: boolean
   onReconstructionEnabledChange: (enabled: boolean) => void
+  cropBounds: CropBounds
+  onCropChange: (bounds: CropBounds) => void
   onSetView: (view: CameraView) => void
   onRotate: (axis: 'x' | 'y' | 'z') => void
 }
@@ -80,6 +82,8 @@ export function ControlPanel({
   reconstructionEnabled,
   reconstructionReady,
   onReconstructionEnabledChange,
+  cropBounds,
+  onCropChange,
   onSetView,
   onRotate,
 }: ControlPanelProps) {
@@ -214,6 +218,12 @@ export function ControlPanel({
           displayValue={`${Math.round(volumeSettings.shading * 100)}%`}
           onChange={(shading) => updateVolume({ shading })}
         />
+        <RangeControl
+          label="3D sharpening"
+          value={volumeSettings.sharpness}
+          displayValue={`${Math.round(volumeSettings.sharpness * 100)}%`}
+          onChange={(sharpness) => updateVolume({ sharpness })}
+        />
       </section>
 
       <section className="control-section">
@@ -234,14 +244,22 @@ export function ControlPanel({
 
       <section className="control-section slider-stack clip-control">
         <div className="section-label">
-          <span>Section depth</span>
-          <small>Reveal internal anatomy</small>
+          <span>Crop depth</span>
+          <small>Synced with 3D box</small>
         </div>
         <RangeControl
-          label="Visible depth"
-          value={volumeSettings.clip}
-          displayValue={`${Math.round(volumeSettings.clip * 100)}%`}
-          onChange={(clip) => updateVolume({ clip })}
+          label="Depth start"
+          value={cropBounds.minZ}
+          max={Math.max(0, cropBounds.maxZ - 0.035)}
+          displayValue={`${Math.round(cropBounds.minZ * 100)}%`}
+          onChange={(minZ) => onCropChange({ ...cropBounds, minZ })}
+        />
+        <RangeControl
+          label="Depth end"
+          value={cropBounds.maxZ}
+          min={Math.min(1, cropBounds.minZ + 0.035)}
+          displayValue={`${Math.round(cropBounds.maxZ * 100)}%`}
+          onChange={(maxZ) => onCropChange({ ...cropBounds, maxZ })}
         />
       </section>
 

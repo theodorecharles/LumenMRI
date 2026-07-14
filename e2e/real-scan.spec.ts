@@ -50,6 +50,47 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
   await expect(volumePane).toHaveAttribute('data-reconstructed-depth', String(reconstructedDepth))
   const distanceAfterModeToggle = Number(await page.locator('.viewer-canvas').getAttribute('data-camera-distance'))
   expect(Math.abs(distanceAfterModeToggle - distanceBeforeModeToggle)).toBeLessThan(0.002)
+  await page.getByRole('button', { name: 'Edit 3D crop box' }).click()
+  await expect(volumePane).toHaveAttribute('data-crop-editing', 'true')
+  const cropHandles = page.getByRole('group', { name: '3D crop box handles' })
+  await expect(cropHandles.getByRole('button')).toHaveCount(6)
+  const nearDepthHandle = page.getByRole('button', { name: 'Drag near depth crop face' })
+  const farDepthHandle = page.getByRole('button', { name: 'Drag far depth crop face' })
+  const nearDepthBox = await nearDepthHandle.boundingBox()
+  const farDepthBox = await farDepthHandle.boundingBox()
+  expect(nearDepthBox).not.toBeNull()
+  expect(farDepthBox).not.toBeNull()
+  if (nearDepthBox && farDepthBox) {
+    const near = {
+      x: nearDepthBox.x + nearDepthBox.width / 2,
+      y: nearDepthBox.y + nearDepthBox.height / 2,
+    }
+    const far = {
+      x: farDepthBox.x + farDepthBox.width / 2,
+      y: farDepthBox.y + farDepthBox.height / 2,
+    }
+    await page.mouse.move(far.x, far.y)
+    await page.mouse.down()
+    for (let step = 1; step <= 8; step += 1) {
+      await page.mouse.move(
+        far.x + (near.x - far.x) * 0.32 * step / 8,
+        far.y + (near.y - far.y) * 0.32 * step / 8,
+      )
+      await page.waitForTimeout(25)
+    }
+    await page.mouse.up()
+  }
+  await expect.poll(async () => page.locator('.viewer-canvas').getAttribute('data-crop-bounds'))
+    .not.toBe('0.0000,1.0000,0.0000,1.0000,0.0000,1.0000')
+  const cropValues = (await page.locator('.viewer-canvas').getAttribute('data-crop-bounds'))
+    ?.split(',').map(Number) || []
+  expect(cropValues[5]).toBeLessThan(0.9)
+  expect(Number(await page.getByRole('slider', { name: 'Depth end' }).inputValue()))
+    .toBeCloseTo(cropValues[5], 1)
+  await page.getByRole('slider', { name: '3D sharpening' }).fill('0.8')
+  await expect(page.getByRole('slider', { name: '3D sharpening' })).toHaveValue('0.8')
+  await page.screenshot({ path: 'artifacts/draggable-3d-depth-crop.png', fullPage: true })
+  await page.getByRole('button', { name: 'Stop editing 3D crop box' }).click()
   const thermalPalette = page.getByRole('radio', { name: 'thermal' })
   await thermalPalette.click()
   await expect(thermalPalette).toHaveAttribute('aria-checked', 'true')
@@ -183,6 +224,8 @@ test('keeps the library and 2D viewer usable on a mobile viewport', async ({ pag
     { timeout: 120_000 },
   )
   expect(Number(await page.locator('.viewer-stage-pane').getAttribute('data-synthetic-slices'))).toBeGreaterThan(0)
+  await page.getByRole('button', { name: 'Edit 3D crop box' }).click()
+  await expect(page.getByRole('group', { name: '3D crop box handles' }).getByRole('button')).toHaveCount(6)
   await page.getByRole('button', { name: 'Enter fullscreen' }).click()
   await expect(page.locator('.stage-shell')).toHaveClass(/is-fullscreen/)
   await expect(page.locator('.app-header')).toBeHidden()
@@ -194,6 +237,7 @@ test('keeps the library and 2D viewer usable on a mobile viewport', async ({ pag
   await page.screenshot({ path: 'artifacts/mobile-volume-fullscreen.png', fullPage: true })
   await page.getByRole('button', { name: 'Exit fullscreen' }).click()
   await expect(page.locator('.stage-shell')).not.toHaveClass(/is-fullscreen/)
+  await page.getByRole('button', { name: 'Stop editing 3D crop box' }).click()
   await page.getByRole('tab', { name: /2D slice/ }).click()
   await expect(page.getByTestId('slice-canvas')).toBeVisible()
   await page.screenshot({ path: 'artifacts/mobile-slice-view.png', fullPage: true })

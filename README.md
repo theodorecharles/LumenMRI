@@ -26,9 +26,9 @@ The homepage opens to the included scan library. Choose **Open scan** to inspect
 - Diagnostic-style 2D slice canvas with orientation markers, layer position, window/level, slider, buttons, and scroll navigation
 - Linked 2D/3D split view with an optional highlighted slice plane
 - Instant Enhanced/Acquired 3D comparison, true orthographic isometric projection, and a clickable A/P/L/R/S/I anatomical view cube
-- Interactive 2D crop ROI that clips the X/Y bounds across every 3D layer
+- Shared six-face crop volume with projected, draggable 3D handles, two-sided depth cropping, a synchronized 2D ROI, and automatic recentering
 - 90° dataset rotations and axial, side, top, and perspective camera presets
-- Transfer-function presets, threshold, opacity, window, level, ray detail, surface lighting, thermal and custom three-stop color maps, and section-depth controls
+- Transfer-function presets, threshold, opacity, window, level, ray detail, surface lighting, live 3D sharpening, thermal and custom three-stop color maps, and depth-range controls
 - Browser Back navigation and Lumen-brand navigation to the library
 - Fullscreen, auto-orbit, reset, and PNG capture
 - Responsive desktop and mobile layouts

@@ -4,6 +4,7 @@ import {
   Camera,
   Columns2,
   Cpu,
+  Crop,
   FolderOpen,
   LayoutGrid,
   Layers3,
@@ -46,12 +47,19 @@ const DEFAULT_VOLUME_SETTINGS: VolumeSettings = {
   level: 0.46,
   detail: 0.62,
   shading: 0.72,
-  clip: 1,
+  sharpness: 0.34,
   palette: 'cyan',
   customPalette: ['#10152e', '#b329ff', '#fff06a'],
 }
 
-const FULL_CROP: CropBounds = { minX: 0, maxX: 1, minY: 0, maxY: 1 }
+const FULL_CROP: CropBounds = {
+  minX: 0,
+  maxX: 1,
+  minY: 0,
+  maxY: 1,
+  minZ: 0,
+  maxZ: 1,
+}
 
 type Screen = 'library' | 'viewer'
 type ViewerLayout = 'volume' | 'slice' | 'split'
@@ -84,6 +92,9 @@ export default function App() {
 
   const workerBusy = progress.phase === 'scanning' || progress.phase === 'loading'
   const busy = workerBusy || openingId !== null
+  const volumeCropped = cropBounds.minX > 0.001 || cropBounds.maxX < 0.999 ||
+    cropBounds.minY > 0.001 || cropBounds.maxY < 0.999 ||
+    cropBounds.minZ > 0.001 || cropBounds.maxZ < 0.999
   const bundledSeries = useMemo(
     () => catalog?.datasets.flatMap((dataset) => dataset.series) || [],
     [catalog],
@@ -239,6 +250,10 @@ export default function App() {
     setCropBounds(FULL_CROP)
     setCropEditing(false)
   }, [volume])
+
+  useEffect(() => {
+    if (cropEditing) setAutoRotate(false)
+  }, [cropEditing])
 
   const toggleStageFullscreen = useCallback(() => {
     if (isStageFullscreen) {
@@ -403,6 +418,27 @@ export default function App() {
                     {viewerLayout !== 'slice' ? (
                       <>
                         <button
+                          className={cropEditing ? 'crop-box-toggle active' : 'crop-box-toggle'}
+                          type="button"
+                          aria-pressed={cropEditing}
+                          aria-label={cropEditing ? 'Stop editing 3D crop box' : 'Edit 3D crop box'}
+                          title={cropEditing ? 'Stop editing 3D crop box' : 'Edit 3D crop box'}
+                          onClick={() => setCropEditing((value) => !value)}
+                        >
+                          <Crop size={14} /><span>Crop box</span>
+                        </button>
+                        {volumeCropped ? (
+                          <button
+                            className="icon-button reset-crop-button"
+                            type="button"
+                            aria-label="Reset 3D crop"
+                            title="Reset 3D crop"
+                            onClick={() => setCropBounds(FULL_CROP)}
+                          >
+                            <RotateCcw size={15} />
+                          </button>
+                        ) : null}
+                        <button
                           className={showSliceHighlight ? 'slice-highlight-toggle active' : 'slice-highlight-toggle'}
                           type="button"
                           aria-pressed={showSliceHighlight}
@@ -420,7 +456,7 @@ export default function App() {
                         >
                           {autoRotate ? <Pause size={16} /> : <Play size={16} />}
                         </button>
-                        <button className="icon-button" type="button" title="Reset view (R)" onClick={() => viewerRef.current?.resetView()}><RotateCcw size={16} /></button>
+                        <button className="icon-button reset-view-button" type="button" title="Reset view (R)" onClick={() => viewerRef.current?.resetView()}><RotateCcw size={16} /></button>
                       </>
                     ) : null}
                     <button className="icon-button" type="button" title="Save image (S)" onClick={captureActiveView}><Camera size={16} /></button>
@@ -445,6 +481,7 @@ export default function App() {
                       data-reconstruction-status={reconstruction.status}
                       data-reconstruction-mode={reconstructionEnabled ? 'enhanced' : 'acquired'}
                       data-camera-projection={cameraProjection}
+                      data-crop-editing={cropEditing}
                       data-reconstructed-depth={reconstructionEnabled && reconstruction.volume?.seriesId === volume.seriesId
                         ? reconstruction.volume.dimensions[2]
                         : volume.dimensions[2]}
@@ -463,6 +500,8 @@ export default function App() {
                           sliceIndex={sliceIndex}
                           showSliceHighlight={showSliceHighlight}
                           cropBounds={cropBounds}
+                          cropEditing={cropEditing}
+                          onCropChange={setCropBounds}
                         />
                       </Suspense>
                       <div className="volume-hud top-left">
@@ -555,6 +594,8 @@ export default function App() {
             reconstructionEnabled={reconstructionEnabled}
             reconstructionReady={reconstruction.volume?.seriesId === volume?.seriesId}
             onReconstructionEnabledChange={setReconstructionEnabled}
+            cropBounds={cropBounds}
+            onCropChange={setCropBounds}
             onSetView={(view) => viewerRef.current?.setView(view)}
             onRotate={(axis) => viewerRef.current?.rotateVolume(axis)}
           />
