@@ -1,4 +1,4 @@
-export type PaletteName = 'cyan' | 'ember' | 'bone'
+export type PaletteName = 'cyan' | 'thermal' | 'ember' | 'bone' | 'custom'
 
 export type Vec3Tuple = [number, number, number]
 
@@ -33,6 +33,16 @@ export interface VolumeData {
   sliceCount: number
 }
 
+export interface ReconstructedVolume {
+  seriesId: string
+  data: Uint8Array
+  dimensions: Vec3Tuple
+  spacing: Vec3Tuple
+  sourceDepth: number
+  factor: number
+  syntheticSlices: number
+}
+
 export interface ScanProgress {
   phase: 'idle' | 'scanning' | 'loading' | 'ready' | 'error'
   progress: number
@@ -45,8 +55,10 @@ export interface VolumeSettings {
   window: number
   level: number
   detail: number
+  shading: number
   clip: number
   palette: PaletteName
+  customPalette: [string, string, string]
 }
 
 export interface CropBounds {

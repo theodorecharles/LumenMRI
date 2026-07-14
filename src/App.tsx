@@ -17,6 +17,7 @@ import {
   ScanLine,
 } from 'lucide-react'
 import { useDicomLoader } from './hooks/useDicomLoader'
+import { useVolumeReconstruction } from './hooks/useVolumeReconstruction'
 import { chooseDirectory, filesFromDrop } from './lib/fileAccess'
 import { createDemoVolume } from './lib/volume'
 import {
@@ -44,8 +45,10 @@ const DEFAULT_VOLUME_SETTINGS: VolumeSettings = {
   window: 0.82,
   level: 0.46,
   detail: 0.62,
+  shading: 0.72,
   clip: 1,
   palette: 'cyan',
+  customPalette: ['#10152e', '#b329ff', '#fff06a'],
 }
 
 const FULL_CROP: CropBounds = { minX: 0, maxX: 1, minY: 0, maxY: 1 }
@@ -60,6 +63,7 @@ export default function App() {
   const stageRef = useRef<HTMLElement>(null)
   const volumeCache = useRef(new Map<string, VolumeData>())
   const { series, volume, setVolume, progress, error, scanFiles, loadSeries } = useDicomLoader()
+  const reconstruction = useVolumeReconstruction(volume)
   const [screen, setScreen] = useState<Screen>('library')
   const [catalog, setCatalog] = useState<BundledCatalog | null>(null)
   const [catalogLoading, setCatalogLoading] = useState(true)
@@ -68,6 +72,8 @@ export default function App() {
   const [activeSeriesId, setActiveSeriesId] = useState<string | null>(null)
   const [volumeSettings, setVolumeSettings] = useState(DEFAULT_VOLUME_SETTINGS)
   const [autoRotate, setAutoRotate] = useState(false)
+  const [reconstructionEnabled, setReconstructionEnabled] = useState(true)
+  const [cameraProjection, setCameraProjection] = useState<'perspective' | 'isometric'>('perspective')
   const [viewerLayout, setViewerLayout] = useState<ViewerLayout>('volume')
   const [sliceIndex, setSliceIndex] = useState(0)
   const [showSliceHighlight, setShowSliceHighlight] = useState(false)
@@ -153,6 +159,10 @@ export default function App() {
 
   useEffect(() => {
     const navigateFromHistory = () => {
+      if (window.location.hash === '#local') {
+        setScreen('viewer')
+        return
+      }
       const match = window.location.hash.match(/^#series\/(.+)$/)
       if (!match) {
         setScreen('library')
@@ -429,11 +439,25 @@ export default function App() {
 
                 <div className={`stage-view-grid layout-${viewerLayout}`}>
                   {viewerLayout !== 'slice' ? (
-                    <section className="viewer-stage-pane" aria-label="3D volume view">
+                    <section
+                      className="viewer-stage-pane"
+                      aria-label="3D volume view"
+                      data-reconstruction-status={reconstruction.status}
+                      data-reconstruction-mode={reconstructionEnabled ? 'enhanced' : 'acquired'}
+                      data-camera-projection={cameraProjection}
+                      data-reconstructed-depth={reconstructionEnabled && reconstruction.volume?.seriesId === volume.seriesId
+                        ? reconstruction.volume.dimensions[2]
+                        : volume.dimensions[2]}
+                      data-synthetic-slices={reconstruction.volume?.seriesId === volume.seriesId
+                        ? reconstruction.volume.syntheticSlices
+                        : 0}
+                    >
                       <Suspense fallback={<div className="viewer-loading">Initializing GPU renderer…</div>}>
                         <ViewerStage
                           ref={viewerRef}
                           volume={volume}
+                          reconstruction={reconstructionEnabled ? reconstruction.volume : null}
+                          projection={cameraProjection}
                           volumeSettings={volumeSettings}
                           autoRotate={autoRotate}
                           sliceIndex={sliceIndex}
@@ -442,15 +466,34 @@ export default function App() {
                         />
                       </Suspense>
                       <div className="volume-hud top-left">
-                        <span className="hud-kicker">Active reconstruction</span>
+                        <span className="hud-kicker">
+                          {reconstructionEnabled ? 'Enhanced reconstruction' : 'Acquired stack'}
+                        </span>
                         <b>{volume.description}</b>
-                        <small>{volume.orientation} · {volume.dimensions.join(' × ')} voxels</small>
+                        <small>
+                          {volume.orientation} · {volume.dimensions.join(' × ')} acquired
+                          {reconstructionEnabled && reconstruction.volume?.seriesId === volume.seriesId
+                            ? ` · +${reconstruction.volume.syntheticSlices} synthetic · ${reconstruction.volume.dimensions[2]} reconstructed planes`
+                            : reconstruction.volume?.seriesId === volume.seriesId
+                              ? ` · ${reconstruction.volume.syntheticSlices} synthetic available`
+                              : ''}
+                        </small>
                       </div>
                       <div className="volume-hud bottom-left">
                         <MousePointer2 size={14} /><span>Drag to orbit</span><i /><span>Scroll to zoom</span>
                       </div>
                       <div className="render-stats">
-                        <span><Cpu size={13} /> GPU</span><b>{volume.sliceCount} layers</b>
+                        <span>
+                          <Cpu size={13} />
+                          {reconstructionEnabled && reconstruction.volume?.seriesId === volume.seriesId
+                            ? 'SHAPE RECON'
+                            : 'ACQUIRED'}
+                        </span>
+                        <b>
+                          {reconstructionEnabled && reconstruction.volume?.seriesId === volume.seriesId
+                            ? `${volume.dimensions[2]} + ${reconstruction.volume.syntheticSlices} synth`
+                            : `${volume.sliceCount} layers`}
+                        </b>
                       </div>
                     </section>
                   ) : null}
@@ -469,13 +512,27 @@ export default function App() {
                   ) : null}
                 </div>
 
-                {busy ? (
+                {busy || (reconstruction.status === 'processing' && viewerLayout !== 'slice') ? (
                   <div className="stage-progress" role="status">
                     <div>
-                      <span>{openingId ? 'Loading included volume' : progress.label}</span>
-                      <b>{openingId ? '…' : `${Math.round(progress.progress * 100)}%`}</b>
+                      <span>
+                        {reconstruction.status === 'processing' && !busy
+                          ? reconstruction.message
+                          : openingId ? 'Loading included volume' : progress.label}
+                      </span>
+                      <b>
+                        {reconstruction.status === 'processing' && !busy
+                          ? `${Math.round(reconstruction.progress * 100)}%`
+                          : openingId ? '…' : `${Math.round(progress.progress * 100)}%`}
+                      </b>
                     </div>
-                    <i><span style={{ width: openingId ? '65%' : `${progress.progress * 100}%` }} /></i>
+                    <i>
+                      <span style={{
+                        width: reconstruction.status === 'processing' && !busy
+                          ? `${reconstruction.progress * 100}%`
+                          : openingId ? '65%' : `${progress.progress * 100}%`,
+                      }} />
+                    </i>
                   </div>
                 ) : null}
               </>
@@ -493,6 +550,11 @@ export default function App() {
           <ControlPanel
             volumeSettings={volumeSettings}
             setVolumeSettings={setVolumeSettings}
+            projection={cameraProjection}
+            onProjectionChange={setCameraProjection}
+            reconstructionEnabled={reconstructionEnabled}
+            reconstructionReady={reconstruction.volume?.seriesId === volume?.seriesId}
+            onReconstructionEnabledChange={setReconstructionEnabled}
             onSetView={(view) => viewerRef.current?.setView(view)}
             onRotate={(axis) => viewerRef.current?.rotateVolume(axis)}
           />

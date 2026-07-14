@@ -33,6 +33,39 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
   await expect(page.locator('.volume-hud.top-left')).toContainText('AX FLAIR')
   await expect(page.getByRole('tab', { name: /3D/ })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('tab', { name: /Voxel/i })).toHaveCount(0)
+  const volumePane = page.locator('.viewer-stage-pane')
+  await expect(volumePane).toHaveAttribute('data-reconstruction-status', 'ready', { timeout: 120_000 })
+  const acquiredDepth = 38
+  const reconstructedDepth = Number(await volumePane.getAttribute('data-reconstructed-depth'))
+  const syntheticSlices = Number(await volumePane.getAttribute('data-synthetic-slices'))
+  expect(reconstructedDepth).toBeGreaterThan(acquiredDepth)
+  expect(syntheticSlices).toBe(reconstructedDepth - acquiredDepth)
+  await expect(page.locator('.render-stats')).toContainText('SHAPE RECON')
+  const distanceBeforeModeToggle = Number(await page.locator('.viewer-canvas').getAttribute('data-camera-distance'))
+  await page.getByRole('button', { name: 'Acquired', exact: true }).click()
+  await expect(volumePane).toHaveAttribute('data-reconstruction-mode', 'acquired')
+  await expect(volumePane).toHaveAttribute('data-reconstructed-depth', String(acquiredDepth))
+  await page.getByRole('button', { name: 'Enhanced', exact: true }).click()
+  await expect(volumePane).toHaveAttribute('data-reconstruction-mode', 'enhanced')
+  await expect(volumePane).toHaveAttribute('data-reconstructed-depth', String(reconstructedDepth))
+  const distanceAfterModeToggle = Number(await page.locator('.viewer-canvas').getAttribute('data-camera-distance'))
+  expect(Math.abs(distanceAfterModeToggle - distanceBeforeModeToggle)).toBeLessThan(0.002)
+  const thermalPalette = page.getByRole('radio', { name: 'thermal' })
+  await thermalPalette.click()
+  await expect(thermalPalette).toHaveAttribute('aria-checked', 'true')
+  const customPalette = page.getByRole('radio', { name: 'custom' })
+  await customPalette.click()
+  await expect(page.getByLabel('Custom color stops')).toBeVisible()
+  await page.getByLabel('Midtones color').fill('#00ff88')
+  await expect(page.getByLabel('Midtones color')).toHaveValue('#00ff88')
+  await thermalPalette.click()
+  await page.getByRole('button', { name: 'Isometric', exact: true }).click()
+  await expect(volumePane).toHaveAttribute('data-camera-projection', 'isometric')
+  await page.getByRole('button', { name: 'Superior view' }).click()
+  await expect(page.getByRole('group', { name: 'Anatomical view cube' })).toBeVisible()
+  await page.screenshot({ path: 'artifacts/isometric-thermal-reconstruction.png', fullPage: true })
+  await page.getByRole('button', { name: 'Perspective', exact: true }).click()
+  await expect(volumePane).toHaveAttribute('data-camera-projection', 'perspective')
 
   await page.getByRole('tab', { name: /Split/ }).click()
   await expect(page.locator('.viewer-canvas canvas')).toBeVisible()
@@ -92,6 +125,12 @@ test('opens the included shoulder study and returns through the Lumen brand', as
   await shoulder.locator('button').click()
   await expect(page.locator('.viewer-canvas canvas')).toBeVisible({ timeout: 30_000 })
   await expect(page.locator('.volume-hud.top-left')).toContainText('Cor PD frFSE FS')
+  await expect(page.locator('.viewer-stage-pane')).toHaveAttribute(
+    'data-reconstruction-status',
+    'ready',
+    { timeout: 120_000 },
+  )
+  expect(Number(await page.locator('.viewer-stage-pane').getAttribute('data-synthetic-slices'))).toBeGreaterThan(0)
   await page.getByRole('tab', { name: /Split/ }).click()
   await expect(page.getByTestId('slice-canvas')).toBeVisible()
   await page.screenshot({ path: 'artifacts/shoulder-split-view.png', fullPage: true })
@@ -138,6 +177,12 @@ test('keeps the library and 2D viewer usable on a mobile viewport', async ({ pag
   await expect(firstCard).toBeVisible()
   await firstCard.locator('button').click()
   await expect(page.locator('.viewer-canvas canvas')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('.viewer-stage-pane')).toHaveAttribute(
+    'data-reconstruction-status',
+    'ready',
+    { timeout: 120_000 },
+  )
+  expect(Number(await page.locator('.viewer-stage-pane').getAttribute('data-synthetic-slices'))).toBeGreaterThan(0)
   await page.getByRole('button', { name: 'Enter fullscreen' }).click()
   await expect(page.locator('.stage-shell')).toHaveClass(/is-fullscreen/)
   await expect(page.locator('.app-header')).toBeHidden()

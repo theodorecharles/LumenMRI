@@ -2,8 +2,10 @@ import type { PaletteName, Vec3Tuple, VolumeData } from '../types'
 
 export const PALETTES: Record<PaletteName, [string, string, string]> = {
   cyan: ['#071b28', '#20c8e9', '#e8fbff'],
+  thermal: ['#19002f', '#ff3b0a', '#fff36a'],
   ember: ['#220812', '#ff6b3d', '#fff1c7'],
   bone: ['#0e1218', '#a9bdc7', '#ffffff'],
+  custom: ['#10152e', '#b329ff', '#fff06a'],
 }
 
 export function normalizePhysicalSize(size: Vec3Tuple): Vec3Tuple {

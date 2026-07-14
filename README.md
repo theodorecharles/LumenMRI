@@ -22,12 +22,13 @@ The homepage opens to the included scan library. Choose **Open scan** to inspect
 ## Features
 
 - Continuous Three.js ray-marched volumes with physical voxel spacing and dynamic camera fitting
-- Monotonic cubic slice interpolation that reconstructs inter-layer values without blurring the in-plane MRI detail
+- Shape-aware, bidirectionally registered synthetic slices generated in a background worker for seamless through-plane reconstruction with preserved acquired images and sharpened anatomical boundaries
 - Diagnostic-style 2D slice canvas with orientation markers, layer position, window/level, slider, buttons, and scroll navigation
 - Linked 2D/3D split view with an optional highlighted slice plane
+- Instant Enhanced/Acquired 3D comparison, true orthographic isometric projection, and a clickable A/P/L/R/S/I anatomical view cube
 - Interactive 2D crop ROI that clips the X/Y bounds across every 3D layer
 - 90° dataset rotations and axial, side, top, and perspective camera presets
-- Transfer-function presets, threshold, opacity, window, level, ray detail, palette, and section-depth controls
+- Transfer-function presets, threshold, opacity, window, level, ray detail, surface lighting, thermal and custom three-stop color maps, and section-depth controls
 - Browser Back navigation and Lumen-brand navigation to the library
 - Fullscreen, auto-orbit, reset, and PNG capture
 - Responsive desktop and mobile layouts

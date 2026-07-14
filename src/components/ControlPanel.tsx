@@ -2,11 +2,17 @@ import { Layers3, SlidersHorizontal, Sparkles } from 'lucide-react'
 import type { PaletteName, VolumeSettings } from '../types'
 import { PALETTES } from '../lib/volume'
 import { RangeControl } from './RangeControl'
+import type { CameraProjection, CameraView } from './ViewerStage'
 
 interface ControlPanelProps {
   volumeSettings: VolumeSettings
   setVolumeSettings: (settings: VolumeSettings) => void
-  onSetView: (view: 'perspective' | 'slices' | 'side' | 'top') => void
+  projection: CameraProjection
+  onProjectionChange: (projection: CameraProjection) => void
+  reconstructionEnabled: boolean
+  reconstructionReady: boolean
+  onReconstructionEnabledChange: (enabled: boolean) => void
+  onSetView: (view: CameraView) => void
   onRotate: (axis: 'x' | 'y' | 'z') => void
 }
 
@@ -16,29 +22,64 @@ const volumePresets: Array<{ name: string; settings: Partial<VolumeSettings> }> 
   { name: 'Transparent', settings: { threshold: 0.08, opacity: 0.26, window: 0.92, level: 0.43 } },
 ]
 
-function PalettePicker({ value, onChange }: { value: PaletteName; onChange: (name: PaletteName) => void }) {
+function PalettePicker({
+  value,
+  customColors,
+  onChange,
+  onCustomColorChange,
+}: {
+  value: PaletteName
+  customColors: [string, string, string]
+  onChange: (name: PaletteName) => void
+  onCustomColorChange: (index: number, color: string) => void
+}) {
   return (
-    <div className="palette-row" role="radiogroup" aria-label="Color palette">
-      {(Object.keys(PALETTES) as PaletteName[]).map((name) => (
-        <button
-          className={value === name ? 'palette active' : 'palette'}
-          key={name}
-          type="button"
-          role="radio"
-          aria-checked={value === name}
-          onClick={() => onChange(name)}
-        >
-          <i style={{ background: `linear-gradient(135deg, ${PALETTES[name].join(',')})` }} />
-          <span>{name}</span>
-        </button>
-      ))}
-    </div>
+    <>
+      <div className="palette-row" role="radiogroup" aria-label="Color palette">
+        {(Object.keys(PALETTES) as PaletteName[]).map((name) => {
+          const colors = name === 'custom' ? customColors : PALETTES[name]
+          return (
+            <button
+              className={value === name ? 'palette active' : 'palette'}
+              key={name}
+              type="button"
+              role="radio"
+              aria-checked={value === name}
+              onClick={() => onChange(name)}
+            >
+              <i style={{ background: `linear-gradient(135deg, ${colors.join(',')})` }} />
+              <span>{name}</span>
+            </button>
+          )
+        })}
+      </div>
+      {value === 'custom' ? (
+        <div className="custom-palette" aria-label="Custom color stops">
+          {(['Shadows', 'Midtones', 'Highlights'] as const).map((label, index) => (
+            <label key={label}>
+              <span>{label}</span>
+              <input
+                type="color"
+                value={customColors[index]}
+                aria-label={`${label} color`}
+                onChange={(event) => onCustomColorChange(index, event.target.value)}
+              />
+            </label>
+          ))}
+        </div>
+      ) : null}
+    </>
   )
 }
 
 export function ControlPanel({
   volumeSettings,
   setVolumeSettings,
+  projection,
+  onProjectionChange,
+  reconstructionEnabled,
+  reconstructionReady,
+  onReconstructionEnabledChange,
   onSetView,
   onRotate,
 }: ControlPanelProps) {
@@ -71,7 +112,52 @@ export function ControlPanel({
 
       <section className="control-section">
         <div className="section-label">
+          <Layers3 size={14} />
+          <span>3D reconstruction</span>
+          <small>{reconstructionReady ? 'Ready' : 'Processing'}</small>
+        </div>
+        <div className="mode-grid" role="group" aria-label="3D reconstruction mode">
+          <button
+            className={!reconstructionEnabled ? 'active' : ''}
+            type="button"
+            aria-pressed={!reconstructionEnabled}
+            onClick={() => onReconstructionEnabledChange(false)}
+          >
+            Acquired
+          </button>
+          <button
+            className={reconstructionEnabled ? 'active' : ''}
+            type="button"
+            aria-pressed={reconstructionEnabled}
+            disabled={!reconstructionReady}
+            onClick={() => onReconstructionEnabledChange(true)}
+          >
+            Enhanced
+          </button>
+        </div>
+      </section>
+
+      <section className="control-section">
+        <div className="section-label">
           <span>Camera orientation</span>
+        </div>
+        <div className="projection-grid" role="group" aria-label="Camera projection">
+          <button
+            className={projection === 'perspective' ? 'active' : ''}
+            type="button"
+            aria-pressed={projection === 'perspective'}
+            onClick={() => onProjectionChange('perspective')}
+          >
+            Perspective
+          </button>
+          <button
+            className={projection === 'isometric' ? 'active' : ''}
+            type="button"
+            aria-pressed={projection === 'isometric'}
+            onClick={() => onProjectionChange('isometric')}
+          >
+            Isometric
+          </button>
         </div>
         <div className="orientation-grid">
           <button type="button" onClick={() => onSetView('perspective')}>3D</button>
@@ -122,6 +208,12 @@ export function ControlPanel({
           displayValue={`${Math.round(112 + volumeSettings.detail * 320)}×`}
           onChange={(detail) => updateVolume({ detail })}
         />
+        <RangeControl
+          label="Surface lighting"
+          value={volumeSettings.shading}
+          displayValue={`${Math.round(volumeSettings.shading * 100)}%`}
+          onChange={(shading) => updateVolume({ shading })}
+        />
       </section>
 
       <section className="control-section">
@@ -130,7 +222,13 @@ export function ControlPanel({
         </div>
         <PalettePicker
           value={volumeSettings.palette}
+          customColors={volumeSettings.customPalette}
           onChange={(palette) => updateVolume({ palette })}
+          onCustomColorChange={(index, color) => {
+            const customPalette = [...volumeSettings.customPalette] as [string, string, string]
+            customPalette[index] = color
+            updateVolume({ palette: 'custom', customPalette })
+          }}
         />
       </section>
 

@@ -690,83 +690,100 @@ button:disabled {
   font-weight: 500;
 }
 
-.axis-widget {
+.view-cube {
   position: absolute;
   z-index: 4;
-  right: 20px;
-  bottom: 55px;
-  width: 52px;
-  height: 52px;
-  pointer-events: none;
-  opacity: 0.7;
+  right: 18px;
+  bottom: 54px;
+  width: 94px;
+  height: 86px;
+  color: #8ba3ac;
+  font-family: 'DM Mono', monospace;
 }
 
-.axis-widget i {
+.view-cube-model {
   position: absolute;
-  top: 24px;
-  left: 24px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #93aeb7;
+  top: 2px;
+  right: 6px;
+  width: 54px;
+  height: 53px;
+  filter: drop-shadow(0 7px 12px rgba(0, 0, 0, 0.45));
 }
 
-.axis {
+.cube-face,
+.view-cube-opposites button,
+.view-cube-home {
   position: absolute;
   display: grid;
-  width: 17px;
-  height: 17px;
   place-items: center;
+  padding: 0;
+  color: #8ca6af;
   font-family: 'DM Mono', monospace;
   font-size: 8px;
-  border: 1px solid currentColor;
-  border-radius: 50%;
+  cursor: pointer;
+  border: 1px solid rgba(115, 170, 183, 0.28);
+  background: rgba(10, 21, 29, 0.9);
+  transition: color 120ms ease, background 120ms ease, filter 120ms ease;
 }
 
-.axis::after {
-  position: absolute;
-  content: '';
-  background: currentColor;
+.cube-face:hover,
+.view-cube-opposites button:hover,
+.view-cube-home:hover {
+  z-index: 3;
+  color: #d9fbff;
+  background: rgba(40, 149, 172, 0.4);
+  filter: brightness(1.2);
 }
 
-.axis-y {
+.cube-superior {
   top: 0;
-  left: 18px;
-  color: #70e0a0;
+  left: 0;
+  width: 38px;
+  height: 22px;
+  color: #74e5a5;
+  transform: translate(8px, 0) skewX(-36deg);
 }
 
-.axis-y::after {
-  top: 16px;
-  width: 1px;
-  height: 10px;
-}
-
-.axis-x {
-  top: 29px;
+.cube-right {
+  top: 18px;
   right: 0;
+  width: 19px;
+  height: 34px;
   color: #ff7658;
+  transform: skewY(-35deg);
 }
 
-.axis-x::after {
-  top: 7px;
-  right: 16px;
-  width: 10px;
-  height: 1px;
-}
-
-.axis-z {
+.cube-anterior {
   bottom: 0;
   left: 0;
-  color: #56bff1;
+  width: 38px;
+  height: 34px;
+  color: #63c8f7;
+  transform: skewY(0deg);
 }
 
-.axis-z::after {
-  bottom: 13px;
-  left: 15px;
-  width: 13px;
-  height: 1px;
-  transform: rotate(-42deg);
-  transform-origin: left;
+.view-cube-opposites {
+  position: absolute;
+  bottom: 3px;
+  left: 0;
+  display: flex;
+  gap: 3px;
+}
+
+.view-cube-opposites button,
+.view-cube-home {
+  position: static;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+}
+
+.view-cube-home {
+  position: absolute;
+  right: 5px;
+  bottom: 3px;
+  width: 25px;
+  color: var(--cyan);
 }
 
 .stage-progress {
@@ -975,6 +992,43 @@ button:disabled {
   color: #bed3da;
   border-color: var(--line-strong);
   background: rgba(255, 255, 255, 0.025);
+}
+
+.custom-palette {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.custom-palette label {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  color: #657982;
+  font-family: 'DM Mono', monospace;
+  font-size: 7px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.custom-palette input {
+  width: 100%;
+  height: 25px;
+  padding: 2px;
+  cursor: pointer;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: #081017;
+}
+
+.custom-palette input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.custom-palette input::-webkit-color-swatch {
+  border: 0;
+  border-radius: 3px;
 }
 
 .medical-note {
@@ -1898,16 +1952,22 @@ button:disabled {
 }
 
 .orientation-grid,
-.rotation-grid {
+.rotation-grid,
+.projection-grid,
+.mode-grid {
   display: grid;
   gap: 5px;
 }
 
 .orientation-grid { grid-template-columns: repeat(4, 1fr); }
 .rotation-grid { grid-template-columns: repeat(3, 1fr); }
+.projection-grid,
+.mode-grid { grid-template-columns: repeat(2, 1fr); }
 
 .orientation-grid button,
-.rotation-grid button {
+.rotation-grid button,
+.projection-grid button,
+.mode-grid button {
   min-width: 0;
   height: 29px;
   padding: 0 4px;
@@ -1920,10 +1980,29 @@ button:disabled {
 }
 
 .orientation-grid button:hover,
-.rotation-grid button:hover {
+.rotation-grid button:hover,
+.projection-grid button:hover,
+.mode-grid button:hover,
+.projection-grid button.active,
+.mode-grid button.active {
   color: #c7eaf0;
   border-color: var(--line-strong);
   background: var(--cyan-soft);
+}
+
+.projection-grid { margin-bottom: 6px; }
+
+.projection-grid button.active,
+.mode-grid button.active {
+  color: #d7faff;
+  border-color: rgba(60, 211, 237, 0.24);
+  background: rgba(60, 211, 237, 0.12);
+}
+
+.mode-grid button:disabled {
+  color: #3f5158;
+  cursor: wait;
+  background: #091018;
 }
 
 .rotate-label { margin-top: 3px; }

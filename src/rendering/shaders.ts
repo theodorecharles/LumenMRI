@@ -20,6 +20,7 @@ export const volumeFragmentShader = /* glsl */ `
 
   uniform sampler3D uData;
   uniform vec3 uDimensions;
+  uniform float uReconstructed;
   uniform vec3 uSize;
   uniform vec3 uColorLow;
   uniform vec3 uColorMid;
@@ -29,6 +30,7 @@ export const volumeFragmentShader = /* glsl */ `
   uniform float uWindow;
   uniform float uLevel;
   uniform float uSteps;
+  uniform float uShading;
   uniform float uClip;
   uniform vec4 uCrop;
 
@@ -63,9 +65,12 @@ export const volumeFragmentShader = /* glsl */ `
     int slice2 = min(sliceCount - 1, slice1 + 1);
     int slice3 = min(sliceCount - 1, slice1 + 2);
     float t = fract(voxel.z);
-    float value0 = texelFetch(uData, ivec3(inPlane, slice0), 0).r;
     float value1 = texelFetch(uData, ivec3(inPlane, slice1), 0).r;
     float value2 = texelFetch(uData, ivec3(inPlane, slice2), 0).r;
+    if (uReconstructed > 0.5) {
+      return mix(value1, value2, smoothstep(0.0, 1.0, t));
+    }
+    float value0 = texelFetch(uData, ivec3(inPlane, slice0), 0).r;
     float value3 = texelFetch(uData, ivec3(inPlane, slice3), 0).r;
     return interpolateSlices(value0, value1, value2, value3, t);
   }
@@ -111,12 +116,12 @@ export const volumeFragmentShader = /* glsl */ `
       if (structure > 0.001) {
         vec3 voxel = 1.0 / uDimensions;
         vec3 gradient = vec3(
-          sampleVolume(uvw + vec3(voxel.x, 0.0, 0.0)) - sampleVolume(uvw - vec3(voxel.x, 0.0, 0.0)),
-          sampleVolume(uvw + vec3(0.0, voxel.y, 0.0)) - sampleVolume(uvw - vec3(0.0, voxel.y, 0.0)),
-          sampleVolume(uvw + vec3(0.0, 0.0, voxel.z)) - sampleVolume(uvw - vec3(0.0, 0.0, voxel.z))
+          sampleVolume(uvw + vec3(voxel.x, 0.0, 0.0)) - rawValue,
+          sampleVolume(uvw + vec3(0.0, voxel.y, 0.0)) - rawValue,
+          sampleVolume(uvw + vec3(0.0, 0.0, voxel.z)) - rawValue
         );
         vec3 normal = normalize(gradient + vec3(0.0001));
-        float light = 0.58 + 0.42 * abs(dot(normal, -rayDirection));
+        float light = mix(1.0, 0.58 + 0.42 * abs(dot(normal, -rayDirection)), uShading);
         float sampleAlpha = 1.0 - exp(-structure * uOpacity * stepLength * 14.0);
         vec3 sampleColor = palette(value) * light;
         accumulated.rgb += (1.0 - accumulated.a) * sampleColor * sampleAlpha;

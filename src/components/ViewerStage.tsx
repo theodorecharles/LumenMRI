@@ -7,11 +7,12 @@ import {
 } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import type { CropBounds, VolumeData, VolumeSettings } from '../types'
+import type { CropBounds, ReconstructedVolume, VolumeData, VolumeSettings } from '../types'
 import { normalizePhysicalSize, PALETTES } from '../lib/volume'
 import { volumeFragmentShader, volumeVertexShader } from '../rendering/shaders'
 
-export type CameraView = 'perspective' | 'slices' | 'side' | 'top'
+export type CameraView = 'perspective' | 'slices' | 'back' | 'side' | 'left' | 'top' | 'bottom'
+export type CameraProjection = 'perspective' | 'isometric'
 export type RotationAxis = 'x' | 'y' | 'z'
 
 export interface ViewerStageHandle {
@@ -24,6 +25,8 @@ export interface ViewerStageHandle {
 
 interface ViewerStageProps {
   volume: VolumeData
+  reconstruction: ReconstructedVolume | null
+  projection: CameraProjection
   volumeSettings: VolumeSettings
   autoRotate: boolean
   sliceIndex: number
@@ -33,7 +36,8 @@ interface ViewerStageProps {
 
 interface Runtime {
   scene: THREE.Scene
-  camera: THREE.PerspectiveCamera
+  camera: THREE.PerspectiveCamera | THREE.OrthographicCamera
+  projection: CameraProjection
   renderer: THREE.WebGLRenderer
   controls: OrbitControls
   volumeRoot: THREE.Group | null
@@ -48,12 +52,17 @@ interface Runtime {
   visibleDepth: number
   selectedSliceFraction: number
   sliceHighlightRequested: boolean
+  currentSeriesId: string | null
+  needsRender: boolean
   frame: number
   resizeObserver: ResizeObserver
 }
 
-function paletteColors(name: VolumeSettings['palette']) {
-  return PALETTES[name].map((color) => new THREE.Color(color)) as [
+function paletteColors(settings: VolumeSettings) {
+  const colors = settings.palette === 'custom'
+    ? settings.customPalette
+    : PALETTES[settings.palette]
+  return colors.map((color) => new THREE.Color(color)) as [
     THREE.Color,
     THREE.Color,
     THREE.Color,
@@ -71,18 +80,52 @@ function disposeObject(object: THREE.Object3D) {
   })
 }
 
-function fittingDistance(
-  runtime: Runtime,
-) {
-  const verticalHalfFov = THREE.MathUtils.degToRad(runtime.camera.fov * 0.5)
-  const horizontalHalfFov = Math.atan(Math.tan(verticalHalfFov) * runtime.camera.aspect)
+function visibleRadius(runtime: Runtime) {
   const [sizeX, sizeY, sizeZ] = runtime.volumeSize
   const cropWidth = (runtime.cropBounds.maxX - runtime.cropBounds.minX) * sizeX
   const cropHeight = (runtime.cropBounds.maxY - runtime.cropBounds.minY) * sizeY
   const cropDepth = runtime.visibleDepth * sizeZ
-  const radius = Math.max(0.05, Math.hypot(cropWidth, cropHeight, cropDepth) * 0.5)
+  return Math.max(0.05, Math.hypot(cropWidth, cropHeight, cropDepth) * 0.5)
+}
+
+function fittingDistance(runtime: Runtime) {
+  if (!(runtime.camera instanceof THREE.PerspectiveCamera)) return 4
+  const verticalHalfFov = THREE.MathUtils.degToRad(runtime.camera.fov * 0.5)
+  const horizontalHalfFov = Math.atan(Math.tan(verticalHalfFov) * runtime.camera.aspect)
+  const radius = visibleRadius(runtime)
   const limitingHalfFov = Math.max(0.1, Math.min(verticalHalfFov, horizontalHalfFov))
   return radius / Math.sin(limitingHalfFov) * 1.08
+}
+
+function configureControls(
+  camera: THREE.PerspectiveCamera | THREE.OrthographicCamera,
+  element: HTMLElement,
+) {
+  const controls = new OrbitControls(camera, element)
+  controls.enableDamping = true
+  controls.dampingFactor = 0.065
+  controls.minDistance = 0.65
+  controls.maxDistance = 8
+  controls.minZoom = 0.45
+  controls.maxZoom = 8
+  controls.rotateSpeed = 0.65
+  controls.zoomSpeed = 0.8
+  controls.screenSpacePanning = true
+  return controls
+}
+
+function updateOrthographicFrustum(runtime: Runtime) {
+  if (!(runtime.camera instanceof THREE.OrthographicCamera)) return
+  const container = runtime.renderer.domElement.parentElement
+  const aspect = (container?.clientWidth || 1) / Math.max(container?.clientHeight || 1, 1)
+  const halfExtent = visibleRadius(runtime) * 1.08
+  const halfWidth = aspect >= 1 ? halfExtent * aspect : halfExtent
+  const halfHeight = aspect >= 1 ? halfExtent : halfExtent / aspect
+  runtime.camera.left = -halfWidth
+  runtime.camera.right = halfWidth
+  runtime.camera.top = halfHeight
+  runtime.camera.bottom = -halfHeight
+  runtime.camera.updateProjectionMatrix()
 }
 
 function recenterVisibleVolume(runtime: Runtime) {
@@ -109,6 +152,10 @@ function updateSliceVisibility(runtime: Runtime) {
 }
 
 function ensureCameraFits(runtime: Runtime) {
+  if (runtime.camera instanceof THREE.OrthographicCamera) {
+    updateOrthographicFrustum(runtime)
+    return
+  }
   const minimumDistance = fittingDistance(runtime)
   const offset = runtime.camera.position.clone().sub(runtime.controls.target)
   if (offset.length() >= minimumDistance) return
@@ -123,20 +170,67 @@ function positionCamera(runtime: Runtime, view: CameraView) {
   const direction = new THREE.Vector3(1.55, 1.05, 1.75).normalize()
   runtime.camera.up.set(0, 1, 0)
   if (view === 'slices') direction.set(0, 0, 1)
+  else if (view === 'back') direction.set(0, 0, -1)
   else if (view === 'side') direction.set(1, 0, 0)
+  else if (view === 'left') direction.set(-1, 0, 0)
   else if (view === 'top') {
     direction.set(0, 1, 0.001).normalize()
     runtime.camera.up.set(0, 0, -1)
+  } else if (view === 'bottom') {
+    direction.set(0, -1, 0.001).normalize()
+    runtime.camera.up.set(0, 0, 1)
   }
   const distance = fittingDistance(runtime)
   runtime.camera.position.copy(runtime.controls.target).add(direction.multiplyScalar(distance))
+  if (runtime.camera instanceof THREE.OrthographicCamera) {
+    runtime.camera.zoom = 1
+    updateOrthographicFrustum(runtime)
+  }
   runtime.controls.maxDistance = Math.max(5, distance * 1.5)
   runtime.controls.update()
+  runtime.needsRender = true
+}
+
+function setCameraProjection(runtime: Runtime, projection: CameraProjection) {
+  if (runtime.projection === projection) return
+  const target = runtime.controls.target.clone()
+  const direction = runtime.camera.position.clone().sub(target).normalize()
+  const up = runtime.camera.up.clone()
+  const container = runtime.renderer.domElement.parentElement
+  const aspect = (container?.clientWidth || 1) / Math.max(container?.clientHeight || 1, 1)
+  const camera = projection === 'isometric'
+    ? new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 100)
+    : new THREE.PerspectiveCamera(38, aspect, 0.01, 100)
+
+  runtime.controls.dispose()
+  runtime.camera = camera
+  runtime.projection = projection
+  runtime.controls = configureControls(camera, runtime.renderer.domElement)
+  runtime.controls.target.copy(target)
+  camera.up.copy(up)
+  if (camera instanceof THREE.OrthographicCamera) {
+    camera.position.copy(target).add(direction.multiplyScalar(4))
+    updateOrthographicFrustum(runtime)
+  } else {
+    camera.position.copy(target).add(direction.multiplyScalar(fittingDistance(runtime)))
+  }
+  camera.lookAt(target)
+  runtime.controls.update()
+  runtime.needsRender = true
 }
 
 export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
   function ViewerStage(
-    { volume, volumeSettings, autoRotate, sliceIndex, showSliceHighlight, cropBounds },
+    {
+      volume,
+      reconstruction,
+      projection,
+      volumeSettings,
+      autoRotate,
+      sliceIndex,
+      showSliceHighlight,
+      cropBounds,
+    },
     forwardedRef,
   ) {
     const containerRef = useRef<HTMLDivElement>(null)
@@ -157,10 +251,14 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
           runtime.volumeRoot?.rotation.set(0, 0, 0)
           recenterVisibleVolume(runtime)
           positionCamera(runtime, 'perspective')
+          runtime.needsRender = true
         },
         setView: (view) => {
           const runtime = runtimeRef.current
-          if (runtime) positionCamera(runtime, view)
+          if (runtime) {
+            positionCamera(runtime, view)
+            runtime.needsRender = true
+          }
         },
         rotateVolume: (axis) => {
           const root = runtimeRef.current?.volumeRoot
@@ -173,7 +271,10 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
           const rotation = new THREE.Quaternion().setFromAxisAngle(direction, Math.PI / 2)
           root.quaternion.premultiply(rotation).normalize()
           const runtime = runtimeRef.current
-          if (runtime) recenterVisibleVolume(runtime)
+          if (runtime) {
+            recenterVisibleVolume(runtime)
+            runtime.needsRender = true
+          }
         },
         capture: () => {
           const runtime = runtimeRef.current
@@ -234,29 +335,26 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         100,
       )
 
-      const controls = new OrbitControls(camera, renderer.domElement)
-      controls.enableDamping = true
-      controls.dampingFactor = 0.065
-      controls.minDistance = 0.65
-      controls.maxDistance = 5
-      controls.rotateSpeed = 0.65
-      controls.zoomSpeed = 0.8
-      controls.screenSpacePanning = true
+      const controls = configureControls(camera, renderer.domElement)
 
       const resizeObserver = new ResizeObserver(() => {
         const width = container.clientWidth
         const height = container.clientHeight
         if (!width || !height) return
-        camera.aspect = width / height
-        camera.updateProjectionMatrix()
+        if (runtime.camera instanceof THREE.PerspectiveCamera) {
+          runtime.camera.aspect = width / height
+          runtime.camera.updateProjectionMatrix()
+        }
         renderer.setSize(width, height)
         ensureCameraFits(runtime)
+        runtime.needsRender = true
       })
       resizeObserver.observe(container)
 
       const runtime: Runtime = {
         scene,
         camera,
+        projection: 'perspective',
         renderer,
         controls,
         volumeRoot: null,
@@ -271,6 +369,8 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         visibleDepth: 1,
         selectedSliceFraction: 0,
         sliceHighlightRequested: false,
+        currentSeriesId: null,
+        needsRender: true,
         frame: 0,
         resizeObserver,
       }
@@ -279,11 +379,16 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
 
       const animate = () => {
         runtime.frame = requestAnimationFrame(animate)
-        controls.autoRotate = autoRotateRef.current
-        controls.autoRotateSpeed = 0.55
-        controls.update()
-        container.dataset.cameraDistance = camera.position.distanceTo(controls.target).toFixed(5)
-        renderer.render(scene, camera)
+        runtime.controls.autoRotate = autoRotateRef.current
+        runtime.controls.autoRotateSpeed = 0.55
+        const controlsChanged = runtime.controls.update()
+        container.dataset.cameraDistance = runtime.camera.position
+          .distanceTo(runtime.controls.target)
+          .toFixed(5)
+        if (controlsChanged || autoRotateRef.current || runtime.needsRender) {
+          renderer.render(scene, runtime.camera)
+          runtime.needsRender = false
+        }
       }
       animate()
 
@@ -296,7 +401,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       return () => {
         cancelAnimationFrame(runtime.frame)
         resizeObserver.disconnect()
-        controls.dispose()
+        runtime.controls.dispose()
         renderer.domElement.removeEventListener('webglcontextlost', onContextLost)
         scene.children.forEach(disposeObject)
         renderer.dispose()
@@ -307,8 +412,15 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
 
     useEffect(() => {
       const runtime = runtimeRef.current
+      if (runtime) setCameraProjection(runtime, projection)
+    }, [projection])
+
+    useEffect(() => {
+      const runtime = runtimeRef.current
       if (!runtime) return
 
+      const sameSeries = runtime.currentSeriesId === volume.seriesId
+      const retainedQuaternion = sameSeries ? runtime.volumeRoot?.quaternion.clone() : null
       if (runtime.volumeRoot) {
         runtime.scene.remove(runtime.volumeRoot)
         disposeObject(runtime.volumeRoot)
@@ -316,9 +428,12 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         runtime.sliceTexture?.dispose()
       }
 
-      const [width, height, depth] = volume.dimensions
+      const [sourceWidth, sourceHeight, sourceDepth] = volume.dimensions
+      const reconstructed = reconstruction?.seriesId === volume.seriesId ? reconstruction : null
+      const renderData = reconstructed?.data || volume.data
+      const [width, height, depth] = reconstructed?.dimensions || volume.dimensions
       const size = normalizePhysicalSize(volume.physicalSize)
-      const texture = new THREE.Data3DTexture(volume.data, width, height, depth)
+      const texture = new THREE.Data3DTexture(renderData, width, height, depth)
       texture.format = THREE.RedFormat
       texture.type = THREE.UnsignedByteType
       texture.minFilter = THREE.NearestFilter
@@ -326,7 +441,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       texture.unpackAlignment = 1
       texture.needsUpdate = true
 
-      const [low, mid, high] = paletteColors(volumeSettings.palette)
+      const [low, mid, high] = paletteColors(volumeSettings)
       const material = new THREE.ShaderMaterial({
         glslVersion: THREE.GLSL3,
         vertexShader: volumeVertexShader,
@@ -334,6 +449,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         uniforms: {
           uData: { value: texture },
           uDimensions: { value: new THREE.Vector3(width, height, depth) },
+          uReconstructed: { value: reconstructed ? 1 : 0 },
           uSize: { value: new THREE.Vector3(...size) },
           uColorLow: { value: low },
           uColorMid: { value: mid },
@@ -343,6 +459,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
           uWindow: { value: volumeSettings.window },
           uLevel: { value: volumeSettings.level },
           uSteps: { value: Math.round(112 + volumeSettings.detail * 320) },
+          uShading: { value: volumeSettings.shading },
           uClip: { value: volumeSettings.clip },
           uCrop: { value: new THREE.Vector4(
             cropBounds.minX,
@@ -356,14 +473,20 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         depthWrite: false,
       })
       const root = new THREE.Group()
+      if (retainedQuaternion) root.quaternion.copy(retainedQuaternion)
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(size[0], size[1], size[2]), material)
       root.add(mesh)
 
-      const initialSlice = volume.data.subarray(0, width * height)
+      const safeIndex = Math.max(0, Math.min(sourceDepth - 1, sliceIndex))
+      const sourceSliceSize = sourceWidth * sourceHeight
+      const initialSlice = volume.data.subarray(
+        safeIndex * sourceSliceSize,
+        (safeIndex + 1) * sourceSliceSize,
+      )
       const sliceTexture = new THREE.DataTexture(
         initialSlice,
-        width,
-        height,
+        sourceWidth,
+        sourceHeight,
         THREE.RedFormat,
         THREE.UnsignedByteType,
       )
@@ -429,6 +552,16 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       )
       sliceBorder.renderOrder = 11
       sliceHighlight.add(slicePlane, sliceBorder)
+      const cropWidth = cropBounds.maxX - cropBounds.minX
+      const cropHeight = cropBounds.maxY - cropBounds.minY
+      const selectedSliceFraction = sourceDepth > 1 ? safeIndex / (sourceDepth - 1) : 0
+      sliceHighlight.scale.set(cropWidth, cropHeight, 1)
+      sliceHighlight.position.set(
+        ((cropBounds.minX + cropBounds.maxX) * 0.5 - 0.5) * size[0],
+        (0.5 - (cropBounds.minY + cropBounds.maxY) * 0.5) * size[1],
+        (selectedSliceFraction - 0.5) * size[2],
+      )
+      sliceHighlight.visible = showSliceHighlight && selectedSliceFraction <= volumeSettings.clip + 0.0001
       root.add(sliceHighlight)
       runtime.scene.add(root)
       runtime.volumeRoot = root
@@ -441,14 +574,18 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       runtime.volumeSize = size
       runtime.cropBounds = cropBounds
       runtime.visibleDepth = volumeSettings.clip
+      runtime.selectedSliceFraction = selectedSliceFraction
+      runtime.sliceHighlightRequested = showSliceHighlight
+      runtime.currentSeriesId = volume.seriesId
       recenterVisibleVolume(runtime)
-      positionCamera(runtime, 'perspective')
-    }, [volume])
+      if (!sameSeries) positionCamera(runtime, 'perspective')
+      runtime.needsRender = true
+    }, [reconstruction, volume])
 
     useEffect(() => {
       const material = runtimeRef.current?.volumeMaterial
       if (!material) return
-      const [low, mid, high] = paletteColors(volumeSettings.palette)
+      const [low, mid, high] = paletteColors(volumeSettings)
       material.uniforms.uColorLow.value.copy(low)
       material.uniforms.uColorMid.value.copy(mid)
       material.uniforms.uColorHigh.value.copy(high)
@@ -457,12 +594,15 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       material.uniforms.uWindow.value = volumeSettings.window
       material.uniforms.uLevel.value = volumeSettings.level
       material.uniforms.uSteps.value = Math.round(112 + volumeSettings.detail * 320)
+      material.uniforms.uShading.value = volumeSettings.shading
       material.uniforms.uClip.value = volumeSettings.clip
       const sliceMaterial = runtimeRef.current?.sliceMaterial
       if (sliceMaterial) {
         sliceMaterial.uniforms.uWindow.value = volumeSettings.window
         sliceMaterial.uniforms.uLevel.value = volumeSettings.level
       }
+      const runtime = runtimeRef.current
+      if (runtime) runtime.needsRender = true
     }, [volumeSettings])
 
     useEffect(() => {
@@ -478,6 +618,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       runtime.sliceHighlight.position.z =
         (runtime.selectedSliceFraction - 0.5) * runtime.volumeSize[2]
       updateSliceVisibility(runtime)
+      runtime.needsRender = true
     }, [showSliceHighlight, sliceIndex, volume])
 
     useEffect(() => {
@@ -505,6 +646,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         runtime.visibleDepth = volumeSettings.clip
         updateSliceVisibility(runtime)
         recenterVisibleVolume(runtime)
+        runtime.needsRender = true
       }
     }, [cropBounds, volumeSettings.clip])
 
@@ -516,11 +658,39 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
             <p>{renderError}</p>
           </div>
         ) : null}
-        <div className="axis-widget" aria-hidden="true">
-          <span className="axis axis-y">S</span>
-          <span className="axis axis-x">R</span>
-          <span className="axis axis-z">A</span>
-          <i />
+        <div className="view-cube" role="group" aria-label="Anatomical view cube">
+          <div className="view-cube-model">
+            <button type="button" className="cube-face cube-superior" aria-label="Superior view" onClick={() => {
+              const runtime = runtimeRef.current
+              if (runtime) positionCamera(runtime, 'top')
+            }}>S</button>
+            <button type="button" className="cube-face cube-anterior" aria-label="Anterior view" onClick={() => {
+              const runtime = runtimeRef.current
+              if (runtime) positionCamera(runtime, 'slices')
+            }}>A</button>
+            <button type="button" className="cube-face cube-right" aria-label="Right view" onClick={() => {
+              const runtime = runtimeRef.current
+              if (runtime) positionCamera(runtime, 'side')
+            }}>R</button>
+          </div>
+          <div className="view-cube-opposites">
+            <button type="button" aria-label="Inferior view" onClick={() => {
+              const runtime = runtimeRef.current
+              if (runtime) positionCamera(runtime, 'bottom')
+            }}>I</button>
+            <button type="button" aria-label="Posterior view" onClick={() => {
+              const runtime = runtimeRef.current
+              if (runtime) positionCamera(runtime, 'back')
+            }}>P</button>
+            <button type="button" aria-label="Left view" onClick={() => {
+              const runtime = runtimeRef.current
+              if (runtime) positionCamera(runtime, 'left')
+            }}>L</button>
+          </div>
+          <button type="button" className="view-cube-home" aria-label="Three-dimensional view" onClick={() => {
+            const runtime = runtimeRef.current
+            if (runtime) positionCamera(runtime, 'perspective')
+          }}>3D</button>
         </div>
       </div>
     )
