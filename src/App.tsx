@@ -25,7 +25,7 @@ import {
   type BundledCatalog,
   type BundledSeries,
 } from './lib/bundledVolume'
-import type { SeriesSummary, VolumeData, VolumeSettings } from './types'
+import type { CropBounds, SeriesSummary, VolumeData, VolumeSettings } from './types'
 import { ControlPanel } from './components/ControlPanel'
 import { EmptyStage } from './components/EmptyStage'
 import { ScanLibrary } from './components/ScanLibrary'
@@ -46,6 +46,8 @@ const DEFAULT_VOLUME_SETTINGS: VolumeSettings = {
   clip: 1,
   palette: 'cyan',
 }
+
+const FULL_CROP: CropBounds = { minX: 0, maxX: 1, minY: 0, maxY: 1 }
 
 type Screen = 'library' | 'viewer'
 type ViewerLayout = 'volume' | 'slice' | 'split'
@@ -68,6 +70,8 @@ export default function App() {
   const [viewerLayout, setViewerLayout] = useState<ViewerLayout>('volume')
   const [sliceIndex, setSliceIndex] = useState(0)
   const [showSliceHighlight, setShowSliceHighlight] = useState(false)
+  const [cropBounds, setCropBounds] = useState<CropBounds>(FULL_CROP)
+  const [cropEditing, setCropEditing] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
 
   const workerBusy = progress.phase === 'scanning' || progress.phase === 'loading'
@@ -220,6 +224,8 @@ export default function App() {
   useEffect(() => {
     if (!volume) return
     setSliceIndex(Math.floor((volume.dimensions[2] - 1) / 2))
+    setCropBounds(FULL_CROP)
+    setCropEditing(false)
   }, [volume])
 
   const toggleStageFullscreen = useCallback(() => {
@@ -393,6 +399,7 @@ export default function App() {
                           autoRotate={autoRotate}
                           sliceIndex={sliceIndex}
                           showSliceHighlight={showSliceHighlight}
+                          cropBounds={cropBounds}
                         />
                       </Suspense>
                       <div className="volume-hud top-left">
@@ -415,6 +422,10 @@ export default function App() {
                       sliceIndex={sliceIndex}
                       onSliceChange={setSliceIndex}
                       volumeSettings={volumeSettings}
+                      cropBounds={cropBounds}
+                      onCropChange={setCropBounds}
+                      cropEditing={cropEditing}
+                      onCropEditingChange={setCropEditing}
                     />
                   ) : null}
                 </div>

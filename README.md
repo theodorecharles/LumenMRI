@@ -25,6 +25,7 @@ The homepage opens to the included scan library. Choose **Open scan** to inspect
 - Slice-axis-only interpolation to fill inter-layer gaps without blurring the in-plane MRI detail
 - Diagnostic-style 2D slice canvas with orientation markers, layer position, window/level, slider, buttons, and scroll navigation
 - Linked 2D/3D split view with an optional highlighted slice plane
+- Interactive 2D crop ROI that clips the X/Y bounds across every 3D layer
 - 90° dataset rotations and axial, side, top, and perspective camera presets
 - Transfer-function presets, threshold, opacity, window, level, ray detail, palette, and section-depth controls
 - Browser Back navigation and Lumen-brand navigation to the library

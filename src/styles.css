@@ -1668,6 +1668,52 @@ button:disabled {
   box-shadow: 0 18px 54px rgba(0, 0, 0, 0.48);
 }
 
+.crop-overlay {
+  position: absolute;
+  z-index: 4;
+  overflow: hidden;
+  pointer-events: none;
+  touch-action: none;
+}
+
+.crop-overlay.editing {
+  cursor: crosshair;
+  pointer-events: auto;
+}
+
+.crop-selection {
+  position: absolute;
+  border: 1px solid #4ee2f5;
+  background: rgba(60, 211, 237, 0.035);
+  box-shadow: 0 0 0 9999px rgba(1, 4, 7, 0.56), inset 0 0 20px rgba(60, 211, 237, 0.04);
+}
+
+.crop-selection > span {
+  position: absolute;
+  top: 5px;
+  left: 6px;
+  padding: 3px 5px;
+  color: #8aeaf5;
+  font-family: 'DM Mono', monospace;
+  font-size: 7px;
+  letter-spacing: 0.08em;
+  background: rgba(1, 8, 12, 0.72);
+}
+
+.crop-handle {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border: 1px solid #b8f8ff;
+  background: #138ba1;
+  box-shadow: 0 0 7px rgba(60, 211, 237, 0.55);
+}
+
+.handle-nw { top: -5px; left: -5px; }
+.handle-ne { top: -5px; right: -5px; }
+.handle-sw { bottom: -5px; left: -5px; }
+.handle-se { right: -5px; bottom: -5px; }
+
 .orientation-marker {
   position: absolute;
   z-index: 3;
@@ -1716,7 +1762,7 @@ button:disabled {
 .slice-controls {
   z-index: 4;
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) 30px 54px;
+  grid-template-columns: 30px minmax(0, 1fr) 30px auto 54px;
   align-items: center;
   gap: 9px;
   padding: 9px 13px;
@@ -1746,6 +1792,33 @@ button:disabled {
   display: grid;
   min-width: 0;
   gap: 6px;
+}
+
+.slice-controls .slice-crop-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.slice-crop-actions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  gap: 5px;
+  padding: 0 8px;
+  color: #70868f;
+  font-size: 8px;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0b131b;
+}
+
+.slice-crop-actions button.active {
+  color: #d4faff;
+  border-color: var(--line-strong);
+  background: var(--cyan-soft);
 }
 
 .slice-controls > div span {
@@ -2033,13 +2106,18 @@ button:disabled {
   }
 
   .slice-controls {
-    grid-template-columns: 28px minmax(0, 1fr) 28px 42px;
+    grid-template-columns: 28px minmax(0, 1fr) 28px auto 42px;
     gap: 6px;
     padding-inline: 8px;
   }
 
   .slice-controls > div span {
     display: none;
+  }
+
+  .slice-crop-actions button {
+    width: 28px;
+    padding: 0;
   }
 
   .scan-library {

@@ -49,6 +49,13 @@ export interface VolumeSettings {
   palette: PaletteName
 }
 
+export interface CropBounds {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+}
+
 export type WorkerRequest =
   | { type: 'scan'; files: File[] }
   | { type: 'load-series'; seriesId: string }

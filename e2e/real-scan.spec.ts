@@ -34,6 +34,17 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
   const maximum = Number(await sliceSlider.getAttribute('max'))
   await sliceSlider.fill(String(Math.max(0, maximum - 3)))
   await expect(sliceSlider).toHaveValue(String(Math.max(0, maximum - 3)))
+  await page.getByRole('button', { name: 'Crop 3D' }).click()
+  const cropOverlay = page.getByTestId('crop-overlay')
+  const cropBox = await cropOverlay.boundingBox()
+  expect(cropBox).not.toBeNull()
+  if (cropBox) {
+    await page.mouse.move(cropBox.x + cropBox.width * 0.18, cropBox.y + cropBox.height * 0.2)
+    await page.mouse.down()
+    await page.mouse.move(cropBox.x + cropBox.width * 0.8, cropBox.y + cropBox.height * 0.78, { steps: 8 })
+    await page.mouse.up()
+  }
+  await expect(page.getByRole('button', { name: 'Reset volume crop' })).toBeVisible()
   await page.screenshot({ path: 'artifacts/linked-split-view.png', fullPage: true })
 
   await page.getByRole('tab', { name: /2D slice/ }).click()

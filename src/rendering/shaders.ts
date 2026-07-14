@@ -30,6 +30,7 @@ export const volumeFragmentShader = /* glsl */ `
   uniform float uLevel;
   uniform float uSteps;
   uniform float uClip;
+  uniform vec4 uCrop;
 
   float sampleVolume(vec3 uvw) {
     vec3 voxel = clamp(uvw, vec3(0.0), vec3(1.0)) * (uDimensions - vec3(1.0));
@@ -72,6 +73,7 @@ export const volumeFragmentShader = /* glsl */ `
       vec3 position = vOrigin + rayDirection * (bounds.x + (float(index) + 0.5) * stepLength);
       vec3 uvw = position / uSize + 0.5;
       if (uvw.z > uClip) continue;
+      if (uvw.x < uCrop.x || uvw.x > uCrop.y || uvw.y < uCrop.z || uvw.y > uCrop.w) continue;
 
       float rawValue = sampleVolume(uvw);
       float windowLow = uLevel - uWindow * 0.5;

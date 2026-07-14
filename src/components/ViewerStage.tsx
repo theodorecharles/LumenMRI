@@ -7,7 +7,7 @@ import {
 } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import type { VolumeData, VolumeSettings } from '../types'
+import type { CropBounds, VolumeData, VolumeSettings } from '../types'
 import { normalizePhysicalSize, PALETTES } from '../lib/volume'
 import { volumeFragmentShader, volumeVertexShader } from '../rendering/shaders'
 
@@ -28,6 +28,7 @@ interface ViewerStageProps {
   autoRotate: boolean
   sliceIndex: number
   showSliceHighlight: boolean
+  cropBounds: CropBounds
 }
 
 interface Runtime {
@@ -130,7 +131,7 @@ function positionCamera(runtime: Runtime, view: CameraView) {
 
 export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
   function ViewerStage(
-    { volume, volumeSettings, autoRotate, sliceIndex, showSliceHighlight },
+    { volume, volumeSettings, autoRotate, sliceIndex, showSliceHighlight, cropBounds },
     forwardedRef,
   ) {
     const containerRef = useRef<HTMLDivElement>(null)
@@ -353,6 +354,12 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
           uLevel: { value: volumeSettings.level },
           uSteps: { value: Math.round(112 + volumeSettings.detail * 320) },
           uClip: { value: volumeSettings.clip },
+          uCrop: { value: new THREE.Vector4(
+            cropBounds.minX,
+            cropBounds.maxX,
+            1 - cropBounds.maxY,
+            1 - cropBounds.minY,
+          ) },
         },
         side: THREE.BackSide,
         transparent: true,
@@ -468,6 +475,26 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         : 0
       runtime.sliceHighlight.visible = showSliceHighlight
     }, [showSliceHighlight, sliceIndex, volume])
+
+    useEffect(() => {
+      const runtime = runtimeRef.current
+      const crop = runtime?.volumeMaterial?.uniforms.uCrop.value as THREE.Vector4 | undefined
+      if (crop) {
+        crop.set(
+          cropBounds.minX,
+          cropBounds.maxX,
+          1 - cropBounds.maxY,
+          1 - cropBounds.minY,
+        )
+      }
+      if (runtime?.sliceHighlight) {
+        const width = cropBounds.maxX - cropBounds.minX
+        const height = cropBounds.maxY - cropBounds.minY
+        runtime.sliceHighlight.scale.set(width, height, 1)
+        runtime.sliceHighlight.position.x = ((cropBounds.minX + cropBounds.maxX) * 0.5 - 0.5) * runtime.volumeSize[0]
+        runtime.sliceHighlight.position.y = (0.5 - (cropBounds.minY + cropBounds.maxY) * 0.5) * runtime.volumeSize[1]
+      }
+    }, [cropBounds])
 
     return (
       <div className="viewer-canvas" ref={containerRef}>
