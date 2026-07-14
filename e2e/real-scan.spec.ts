@@ -47,6 +47,19 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
   await expect(page.getByRole('button', { name: 'Reset volume crop' })).toBeVisible()
   await page.screenshot({ path: 'artifacts/linked-split-view.png', fullPage: true })
 
+  const volumeCanvas = page.locator('.viewer-canvas canvas')
+  const volumeBox = await volumeCanvas.boundingBox()
+  const distanceBeforeOrbit = Number(await page.locator('.viewer-canvas').getAttribute('data-camera-distance'))
+  if (volumeBox) {
+    await page.mouse.move(volumeBox.x + volumeBox.width * 0.5, volumeBox.y + volumeBox.height * 0.5)
+    await page.mouse.down()
+    await page.mouse.move(volumeBox.x + volumeBox.width * 0.67, volumeBox.y + volumeBox.height * 0.44, { steps: 8 })
+    await page.mouse.up()
+  }
+  await page.waitForTimeout(250)
+  const distanceAfterOrbit = Number(await page.locator('.viewer-canvas').getAttribute('data-camera-distance'))
+  expect(Math.abs(distanceAfterOrbit - distanceBeforeOrbit)).toBeLessThan(0.002)
+
   await page.getByRole('tab', { name: /2D slice/ }).click()
   await expect(page.getByTestId('slice-canvas')).toBeVisible()
   await expect(page.locator('.viewer-canvas')).toHaveCount(0)
@@ -89,6 +102,9 @@ test('preserves sagittal physical proportions without clipping', async ({ page }
   await page.waitForTimeout(1_500)
   await page.screenshot({ path: 'artifacts/sagittal-physical-scale.png', fullPage: true })
   await page.getByRole('tab', { name: /Split/ }).click()
+  await page.getByRole('button', { name: 'Slices' }).click()
+  await page.waitForTimeout(800)
+  await page.screenshot({ path: 'artifacts/sagittal-2d-3d-orientation.png', fullPage: true })
   await page.getByRole('button', { name: 'X axis' }).click()
   await page.getByRole('button', { name: 'Y axis' }).click()
   await page.getByRole('button', { name: 'Side' }).click()

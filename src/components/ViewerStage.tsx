@@ -44,8 +44,8 @@ interface Runtime {
   sliceMaterial: THREE.ShaderMaterial | null
   sliceTexture: THREE.DataTexture | null
   volumeSize: [number, number, number]
-  volumeRadius: number
-  isOrbiting: boolean
+  cropBounds: CropBounds
+  visibleDepth: number
   frame: number
   resizeObserver: ResizeObserver
 }
@@ -71,35 +71,33 @@ function disposeObject(object: THREE.Object3D) {
 
 function fittingDistance(
   runtime: Runtime,
-  cameraDirection = runtime.camera.position.clone().sub(runtime.controls.target),
-  cameraUp = runtime.camera.up,
 ) {
   const verticalHalfFov = THREE.MathUtils.degToRad(runtime.camera.fov * 0.5)
   const horizontalHalfFov = Math.atan(Math.tan(verticalHalfFov) * runtime.camera.aspect)
-  const direction = cameraDirection.clone().normalize()
-  const correctedUp = cameraUp.clone().addScaledVector(direction, -cameraUp.dot(direction))
-  if (correctedUp.lengthSq() < 0.0001) correctedUp.set(0, 1, 0)
-  correctedUp.normalize()
-  const right = correctedUp.clone().cross(direction).normalize()
-  const half = runtime.volumeSize.map((value) => value * 0.5) as [number, number, number]
-  const rotation = runtime.volumeRoot?.quaternion || new THREE.Quaternion()
-  const padding = 1.12
-  let requiredDistance = runtime.volumeRadius * 1.05
+  const [sizeX, sizeY, sizeZ] = runtime.volumeSize
+  const cropWidth = (runtime.cropBounds.maxX - runtime.cropBounds.minX) * sizeX
+  const cropHeight = (runtime.cropBounds.maxY - runtime.cropBounds.minY) * sizeY
+  const cropDepth = runtime.visibleDepth * sizeZ
+  const radius = Math.max(0.05, Math.hypot(cropWidth, cropHeight, cropDepth) * 0.5)
+  const limitingHalfFov = Math.max(0.1, Math.min(verticalHalfFov, horizontalHalfFov))
+  return radius / Math.sin(limitingHalfFov) * 1.08
+}
 
-  for (const x of [-half[0], half[0]]) {
-    for (const y of [-half[1], half[1]]) {
-      for (const z of [-half[2], half[2]]) {
-        const corner = new THREE.Vector3(x, y, z)
-          .applyQuaternion(rotation)
-          .sub(runtime.controls.target)
-        const towardCamera = corner.dot(direction)
-        const horizontalFit = towardCamera + Math.abs(corner.dot(right)) * padding / Math.tan(horizontalHalfFov)
-        const verticalFit = towardCamera + Math.abs(corner.dot(correctedUp)) * padding / Math.tan(verticalHalfFov)
-        requiredDistance = Math.max(requiredDistance, horizontalFit, verticalFit)
-      }
-    }
-  }
-  return requiredDistance
+function recenterVisibleVolume(runtime: Runtime) {
+  const [sizeX, sizeY, sizeZ] = runtime.volumeSize
+  const localCenter = new THREE.Vector3(
+    ((runtime.cropBounds.minX + runtime.cropBounds.maxX) * 0.5 - 0.5) * sizeX,
+    (0.5 - (runtime.cropBounds.minY + runtime.cropBounds.maxY) * 0.5) * sizeY,
+    (runtime.visibleDepth * 0.5 - 0.5) * sizeZ,
+  )
+  const worldCenter = localCenter.applyQuaternion(
+    runtime.volumeRoot?.quaternion || new THREE.Quaternion(),
+  )
+  const targetDelta = worldCenter.sub(runtime.controls.target)
+  runtime.controls.target.add(targetDelta)
+  runtime.camera.position.add(targetDelta)
+  ensureCameraFits(runtime)
+  runtime.controls.update()
 }
 
 function ensureCameraFits(runtime: Runtime) {
@@ -122,10 +120,9 @@ function positionCamera(runtime: Runtime, view: CameraView) {
     direction.set(0, 1, 0.001).normalize()
     runtime.camera.up.set(0, 0, -1)
   }
-  const distance = fittingDistance(runtime, direction, runtime.camera.up)
-  runtime.camera.position.copy(direction.multiplyScalar(distance))
+  const distance = fittingDistance(runtime)
+  runtime.camera.position.copy(runtime.controls.target).add(direction.multiplyScalar(distance))
   runtime.controls.maxDistance = Math.max(5, distance * 1.5)
-  runtime.controls.target.set(0, 0, 0)
   runtime.controls.update()
 }
 
@@ -150,6 +147,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
           const runtime = runtimeRef.current
           if (!runtime) return
           runtime.volumeRoot?.rotation.set(0, 0, 0)
+          recenterVisibleVolume(runtime)
           positionCamera(runtime, 'perspective')
         },
         setView: (view) => {
@@ -167,7 +165,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
           const rotation = new THREE.Quaternion().setFromAxisAngle(direction, Math.PI / 2)
           root.quaternion.premultiply(rotation).normalize()
           const runtime = runtimeRef.current
-          if (runtime) ensureCameraFits(runtime)
+          if (runtime) recenterVisibleVolume(runtime)
         },
         capture: () => {
           const runtime = runtimeRef.current
@@ -267,8 +265,8 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         sliceMaterial: null,
         sliceTexture: null,
         volumeSize: [1, 1, 1],
-        volumeRadius: 0.8,
-        isOrbiting: false,
+        cropBounds: { minX: 0, maxX: 1, minY: 0, maxY: 1 },
+        visibleDepth: 1,
         frame: 0,
         resizeObserver,
       }
@@ -280,7 +278,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         controls.autoRotate = autoRotateRef.current
         controls.autoRotateSpeed = 0.55
         controls.update()
-        if (autoRotateRef.current || runtime.isOrbiting) ensureCameraFits(runtime)
+        container.dataset.cameraDistance = camera.position.distanceTo(controls.target).toFixed(5)
         renderer.render(scene, camera)
       }
       animate()
@@ -290,24 +288,12 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         setRenderError('The GPU context was lost. Reload the page to restore the viewer.')
       }
       renderer.domElement.addEventListener('webglcontextlost', onContextLost)
-      const onPointerDown = (event: PointerEvent) => {
-        if (event.pointerType === 'mouse' && event.button === 0) runtime.isOrbiting = true
-      }
-      const onPointerUp = () => {
-        runtime.isOrbiting = false
-      }
-      renderer.domElement.addEventListener('pointerdown', onPointerDown)
-      window.addEventListener('pointerup', onPointerUp)
-      window.addEventListener('pointercancel', onPointerUp)
 
       return () => {
         cancelAnimationFrame(runtime.frame)
         resizeObserver.disconnect()
         controls.dispose()
         renderer.domElement.removeEventListener('webglcontextlost', onContextLost)
-        renderer.domElement.removeEventListener('pointerdown', onPointerDown)
-        window.removeEventListener('pointerup', onPointerUp)
-        window.removeEventListener('pointercancel', onPointerUp)
         scene.children.forEach(disposeObject)
         renderer.dispose()
         renderer.domElement.remove()
@@ -398,7 +384,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
           uniform float uWindow;
           uniform float uLevel;
           void main() {
-            float raw = texture(uSlice, vUv).r;
+            float raw = texture(uSlice, vec2(vUv.x, 1.0 - vUv.y)).r;
             float low = uLevel - uWindow * 0.5;
             float value = clamp((raw - low) / max(0.015, uWindow), 0.0, 1.0);
             vec3 gray = vec3(value);
@@ -438,7 +424,9 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       runtime.sliceMaterial = sliceMaterial
       runtime.sliceTexture = sliceTexture
       runtime.volumeSize = size
-      runtime.volumeRadius = Math.sqrt(size[0] ** 2 + size[1] ** 2 + size[2] ** 2) * 0.5
+      runtime.cropBounds = cropBounds
+      runtime.visibleDepth = volumeSettings.clip
+      recenterVisibleVolume(runtime)
       positionCamera(runtime, 'perspective')
     }, [volume])
 
@@ -494,7 +482,12 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         runtime.sliceHighlight.position.x = ((cropBounds.minX + cropBounds.maxX) * 0.5 - 0.5) * runtime.volumeSize[0]
         runtime.sliceHighlight.position.y = (0.5 - (cropBounds.minY + cropBounds.maxY) * 0.5) * runtime.volumeSize[1]
       }
-    }, [cropBounds])
+      if (runtime) {
+        runtime.cropBounds = cropBounds
+        runtime.visibleDepth = volumeSettings.clip
+        recenterVisibleVolume(runtime)
+      }
+    }, [cropBounds, volumeSettings.clip])
 
     return (
       <div className="viewer-canvas" ref={containerRef}>

@@ -33,14 +33,28 @@ export const volumeFragmentShader = /* glsl */ `
   uniform vec4 uCrop;
 
   float sampleVolume(vec3 uvw) {
-    vec3 voxel = clamp(uvw, vec3(0.0), vec3(1.0)) * (uDimensions - vec3(1.0));
+    vec3 orientedUVW = vec3(uvw.x, 1.0 - uvw.y, uvw.z);
+    vec3 voxel = clamp(orientedUVW, vec3(0.0), vec3(1.0)) * (uDimensions - vec3(1.0));
     ivec2 inPlane = ivec2(round(voxel.xy));
-    int lowerSlice = int(floor(voxel.z));
-    int upperSlice = min(lowerSlice + 1, int(uDimensions.z) - 1);
-    float betweenSlices = smoothstep(0.0, 1.0, fract(voxel.z));
-    float lowerValue = texelFetch(uData, ivec3(inPlane, lowerSlice), 0).r;
-    float upperValue = texelFetch(uData, ivec3(inPlane, upperSlice), 0).r;
-    return mix(lowerValue, upperValue, betweenSlices);
+    int sliceCount = int(uDimensions.z);
+    int slice1 = int(floor(voxel.z));
+    int slice0 = max(0, slice1 - 1);
+    int slice2 = min(sliceCount - 1, slice1 + 1);
+    int slice3 = min(sliceCount - 1, slice1 + 2);
+    float t = fract(voxel.z);
+    float value0 = texelFetch(uData, ivec3(inPlane, slice0), 0).r;
+    float value1 = texelFetch(uData, ivec3(inPlane, slice1), 0).r;
+    float value2 = texelFetch(uData, ivec3(inPlane, slice2), 0).r;
+    float value3 = texelFetch(uData, ivec3(inPlane, slice3), 0).r;
+    float t2 = t * t;
+    float t3 = t2 * t;
+    float reconstructed = 0.5 * (
+      2.0 * value1 +
+      (-value0 + value2) * t +
+      (2.0 * value0 - 5.0 * value1 + 4.0 * value2 - value3) * t2 +
+      (-value0 + 3.0 * value1 - 3.0 * value2 + value3) * t3
+    );
+    return clamp(reconstructed, 0.0, 1.0);
   }
 
   vec2 hitBox(vec3 origin, vec3 direction) {
@@ -70,7 +84,8 @@ export const volumeFragmentShader = /* glsl */ `
 
     for (int index = 0; index < 512; index++) {
       if (float(index) >= uSteps || accumulated.a > 0.975) break;
-      vec3 position = vOrigin + rayDirection * (bounds.x + (float(index) + 0.5) * stepLength);
+      float rayJitter = fract(52.9829189 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y));
+      vec3 position = vOrigin + rayDirection * (bounds.x + (float(index) + rayJitter) * stepLength);
       vec3 uvw = position / uSize + 0.5;
       if (uvw.z > uClip) continue;
       if (uvw.x < uCrop.x || uvw.x > uCrop.y || uvw.y < uCrop.z || uvw.y > uCrop.w) continue;
