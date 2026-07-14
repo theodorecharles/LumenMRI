@@ -1974,6 +1974,16 @@ button:disabled {
   }
 }
 
+@media (max-width: 1350px) {
+  .stage-toolbar {
+    justify-content: flex-start;
+  }
+
+  .volume-hud.top-left {
+    display: none;
+  }
+}
+
 @media (max-width: 1180px) {
   .workspace {
     grid-template-columns: 218px minmax(340px, 1fr) 270px;
@@ -1983,9 +1993,6 @@ button:disabled {
     display: none;
   }
 
-  .volume-hud.top-left {
-    display: none;
-  }
 }
 
 @media (max-width: 920px) {
