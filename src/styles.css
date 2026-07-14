@@ -1466,17 +1466,21 @@ button:disabled {
   background: linear-gradient(180deg, transparent 64%, rgba(2, 5, 8, 0.82));
 }
 
-.series-preview img {
+.series-preview-image {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
   display: block;
-  max-width: none;
   height: 100%;
-  object-fit: contain;
-  object-position: left center;
+  aspect-ratio: 1;
+  background-repeat: no-repeat;
   filter: contrast(1.06) saturate(0.8);
-  transition: transform 90ms linear, filter 160ms ease;
+  transform: translateX(-50%);
+  transition: filter 160ms ease;
 }
 
-.scan-card:hover .series-preview img {
+.scan-card:hover .series-preview-image {
   filter: contrast(1.1) saturate(1);
 }
 

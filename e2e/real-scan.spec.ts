@@ -13,8 +13,19 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
   await expect(page.getByRole('tab', { name: /Left Shoulder MRI 6/ })).toBeVisible()
 
   const flair = page.locator('.scan-card').filter({ hasText: 'AX FLAIR' }).first()
-  await flair.hover()
-  await expect(flair.getByText(/Layer \d+\/8/)).toBeVisible()
+  const preview = flair.locator('.series-preview')
+  const previewBox = await preview.boundingBox()
+  expect(previewBox).not.toBeNull()
+  if (previewBox) {
+    await page.mouse.move(previewBox.x + previewBox.width * 0.05, previewBox.y + previewBox.height * 0.5)
+    await expect(preview).toHaveAttribute('data-preview-frame', '0')
+    const firstPreviewSlice = Number(await preview.getAttribute('data-preview-slice'))
+    await page.mouse.move(previewBox.x + previewBox.width * 0.95, previewBox.y + previewBox.height * 0.5)
+    await expect(preview).toHaveAttribute('data-preview-frame', '7')
+    const lastPreviewSlice = Number(await preview.getAttribute('data-preview-slice'))
+    expect(lastPreviewSlice).toBeGreaterThan(firstPreviewSlice)
+  }
+  await expect(flair.getByText(/Slice \d+\/\d+/)).toBeVisible()
   await page.screenshot({ path: 'artifacts/scan-library.png', fullPage: true })
   await flair.locator('button').click()
 

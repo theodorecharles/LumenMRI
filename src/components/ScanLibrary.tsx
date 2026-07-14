@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Box, ChevronRight, FolderOpen, Layers3, Maximize2, ScanLine } from 'lucide-react'
 import type { BundledCatalog, BundledSeries } from '../lib/bundledVolume'
 import { bundledAssetUrl } from '../lib/bundledVolume'
@@ -16,36 +16,47 @@ interface ScanLibraryProps {
 function SeriesPreview({ series }: { series: BundledSeries }) {
   const [frame, setFrame] = useState(0)
   const [hovered, setHovered] = useState(false)
+  const frameCount = Math.max(1, series.previewFrames)
+  const previewFraction = frameCount > 1
+    ? 0.12 + (frame / (frameCount - 1)) * 0.76
+    : 0.5
+  const previewSlice = Math.round(previewFraction * Math.max(0, series.sliceCount - 1))
 
-  useEffect(() => {
-    if (!hovered || series.previewFrames < 2) return
-    const interval = window.setInterval(
-      () => setFrame((value) => (value + 1) % series.previewFrames),
-      145,
-    )
-    return () => window.clearInterval(interval)
-  }, [hovered, series.previewFrames])
+  const scrubToPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch') return
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const position = Math.max(0, Math.min(0.999999, (event.clientX - bounds.left) / bounds.width))
+    setFrame(Math.floor(position * frameCount))
+  }
 
   return (
     <div
       className="series-preview"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => {
+      data-preview-frame={frame}
+      data-preview-slice={previewSlice}
+      onPointerEnter={(event) => {
+        setHovered(true)
+        scrubToPointer(event)
+      }}
+      onPointerMove={scrubToPointer}
+      onPointerLeave={() => {
         setHovered(false)
         setFrame(0)
       }}
     >
-      <img
-        src={bundledAssetUrl(series.preview)}
-        alt={`${series.description} animated slice preview`}
+      <span
+        className="series-preview-image"
+        role="img"
+        aria-label={`${series.description} slice preview`}
         style={{
-          width: `${series.previewFrames * 100}%`,
-          transform: `translateX(-${(frame * 100) / series.previewFrames}%)`,
+          backgroundImage: `url("${bundledAssetUrl(series.preview)}")`,
+          backgroundSize: `${frameCount * 100}% 100%`,
+          backgroundPosition: `${frameCount > 1 ? (frame / (frameCount - 1)) * 100 : 50}% center`,
         }}
       />
       <span className="preview-plane">{series.orientation}</span>
       <span className="preview-hover">
-        <ScanLine size={13} /> {hovered ? `Layer ${frame + 1}/${series.previewFrames}` : 'Hover to scrub'}
+        <ScanLine size={13} /> {hovered ? `Slice ${previewSlice + 1}/${series.sliceCount}` : 'Hover to scrub'}
       </span>
       <span className="preview-open">
         <Maximize2 size={14} /> Open viewer
