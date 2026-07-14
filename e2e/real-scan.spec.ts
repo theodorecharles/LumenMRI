@@ -1,0 +1,122 @@
+import { expect, test } from '@playwright/test'
+import { readdirSync } from 'node:fs'
+import { join } from 'node:path'
+
+test('opens the complete scan library and links 2D and 3D views', async ({ page }) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Scan library' })).toBeVisible()
+  await expect(page.locator('.scan-card')).toHaveCount(21, { timeout: 30_000 })
+  await expect(page.getByRole('tab', { name: /Brain MRI 15/ })).toBeVisible()
+  await expect(page.getByRole('tab', { name: /Left Shoulder MRI 6/ })).toBeVisible()
+
+  const flair = page.locator('.scan-card').filter({ hasText: 'AX FLAIR' }).first()
+  await flair.hover()
+  await expect(flair.getByText(/Layer \d+\/8/)).toBeVisible()
+  await page.screenshot({ path: 'artifacts/scan-library.png', fullPage: true })
+  await flair.locator('button').click()
+
+  await expect(page.locator('.viewer-canvas canvas')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('.volume-hud.top-left')).toContainText('AX FLAIR')
+  await expect(page.getByRole('tab', { name: /3D/ })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('tab', { name: /Voxel/i })).toHaveCount(0)
+
+  await page.getByRole('tab', { name: /Split/ }).click()
+  await expect(page.locator('.viewer-canvas canvas')).toBeVisible()
+  await expect(page.getByTestId('slice-canvas')).toBeVisible()
+  const slicePlaneToggle = page.getByRole('button', { name: /selected slice in 3D/i })
+  await expect(slicePlaneToggle).toHaveAttribute('aria-pressed', 'false')
+  await slicePlaneToggle.click()
+  await expect(slicePlaneToggle).toHaveAttribute('aria-pressed', 'true')
+  const sliceSlider = page.getByRole('slider', { name: 'Displayed slice' })
+  const maximum = Number(await sliceSlider.getAttribute('max'))
+  await sliceSlider.fill(String(Math.max(0, maximum - 3)))
+  await expect(sliceSlider).toHaveValue(String(Math.max(0, maximum - 3)))
+  await page.screenshot({ path: 'artifacts/linked-split-view.png', fullPage: true })
+
+  await page.getByRole('tab', { name: /2D slice/ }).click()
+  await expect(page.getByTestId('slice-canvas')).toBeVisible()
+  await expect(page.locator('.viewer-canvas')).toHaveCount(0)
+  await page.screenshot({ path: 'artifacts/diagnostic-slice-view.png', fullPage: true })
+
+  await page.goBack()
+  await expect(page.getByRole('heading', { name: 'Scan library' })).toBeVisible()
+  expect(pageErrors).toEqual([])
+})
+
+test('opens the included shoulder study and returns through the Lumen brand', async ({ page }) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+
+  await page.goto('/')
+  await page.getByRole('tab', { name: /Left Shoulder MRI/ }).click()
+  await expect(page.locator('.scan-card')).toHaveCount(6)
+  const shoulder = page.locator('.scan-card').filter({ hasText: 'Cor PD frFSE FS' }).first()
+  await shoulder.locator('button').click()
+  await expect(page.locator('.viewer-canvas canvas')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('.volume-hud.top-left')).toContainText('Cor PD frFSE FS')
+  await page.getByRole('tab', { name: /Split/ }).click()
+  await expect(page.getByTestId('slice-canvas')).toBeVisible()
+  await page.screenshot({ path: 'artifacts/shoulder-split-view.png', fullPage: true })
+
+  await page.getByRole('link', { name: 'Lumen scan library' }).click()
+  await expect(page.getByRole('heading', { name: 'Scan library' })).toBeVisible()
+  expect(pageErrors).toEqual([])
+})
+
+test('preserves sagittal physical proportions without clipping', async ({ page }) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+
+  await page.goto('/')
+  const sagittal = page.locator('.scan-card').filter({ hasText: 'SAG T1' }).first()
+  await sagittal.locator('button').click()
+  await expect(page.locator('.viewer-canvas canvas')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('.volume-hud.top-left')).toContainText('SAG T1')
+  await page.waitForTimeout(1_500)
+  await page.screenshot({ path: 'artifacts/sagittal-physical-scale.png', fullPage: true })
+  await page.getByRole('tab', { name: /Split/ }).click()
+  await page.getByRole('button', { name: 'X axis' }).click()
+  await page.getByRole('button', { name: 'Y axis' }).click()
+  await page.getByRole('button', { name: 'Side' }).click()
+  await page.waitForTimeout(1_000)
+  await page.screenshot({ path: 'artifacts/sagittal-rotated-split-fit.png', fullPage: true })
+  expect(pageErrors).toEqual([])
+})
+
+test('keeps the library and 2D viewer usable on a mobile viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Scan library' })).toBeVisible()
+  const firstCard = page.locator('.scan-card').first()
+  await expect(firstCard).toBeVisible()
+  await firstCard.locator('button').click()
+  await expect(page.locator('.viewer-canvas canvas')).toBeVisible({ timeout: 30_000 })
+  await page.getByRole('tab', { name: /2D slice/ }).click()
+  await expect(page.getByTestId('slice-canvas')).toBeVisible()
+  await page.screenshot({ path: 'artifacts/mobile-slice-view.png', fullPage: true })
+})
+
+test('decodes a locally selected JPEG 2000 DICOM study', async ({ page }) => {
+  const scanPath = process.env.MRI_JPEG2000_SCAN_PATH
+  test.skip(!scanPath, 'Set MRI_JPEG2000_SCAN_PATH to exercise local JPEG 2000 decoding')
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+
+  await page.goto('/')
+  const files = readdirSync(scanPath!, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(scanPath!, entry.name))
+  const input = page.locator('input[type="file"]')
+  await input.evaluate((element) => {
+    element.removeAttribute('webkitdirectory')
+    element.removeAttribute('directory')
+  })
+  await input.setInputFiles(files)
+  await expect(page.locator('.series-panel').getByText('Cor PD frFSE FS', { exact: true })).toBeVisible({ timeout: 120_000 })
+  await expect(page.locator('.viewer-canvas canvas')).toBeVisible({ timeout: 120_000 })
+  await expect(page.locator('.stage-progress')).toBeHidden({ timeout: 120_000 })
+  expect(pageErrors).toEqual([])
+})

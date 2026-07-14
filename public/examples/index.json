@@ -1,0 +1,840 @@
+{
+  "version": 2,
+  "datasets": [
+    {
+      "id": "brain",
+      "title": "Brain MRI",
+      "anatomy": "Brain",
+      "description": "Complete multi-sequence brain MRI study",
+      "series": [
+        {
+          "id": "brain-01-ax-flair",
+          "datasetId": "brain",
+          "datasetTitle": "Brain MRI",
+          "anatomy": "Brain",
+          "description": "AX FLAIR",
+          "encoding": "gzip",
+          "asset": "brain/01-ax-flair.volume",
+          "preview": "brain/01-ax-flair.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            416,
+            512,
+            38
+          ],
+          "spacing": [
+            0.4492,
+            0.4492,
+            3.9999764740342947
+          ],
+          "physicalSize": [
+            186.8672,
+            229.9904,
+            151.9991060133032
+          ],
+          "scalarRange": [
+            0,
+            553.1521367521368
+          ],
+          "fullScalarRange": [
+            0,
+            959
+          ],
+          "orientation": "Axial",
+          "sliceCount": 38,
+          "byteLength": 8093696,
+          "compressedByteLength": 4625131,
+          "featured": true
+        },
+        {
+          "id": "brain-02-ax-3d-space-iac",
+          "datasetId": "brain",
+          "datasetTitle": "Brain MRI",
+          "anatomy": "Brain",
+          "description": "AX 3D SPACE IAC",
+          "encoding": "gzip",
+          "asset": "brain/02-ax-3d-space-iac.volume",
+          "preview": "brain/02-ax-3d-space-iac.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            608,
+            640,
+            64
+          ],
+          "spacing": [
+            0.2656,
+            0.2656,
+            0.5999600158730516
+          ],
+          "physicalSize": [
+            161.4848,
+            169.984,
+            38.3974410158753
+          ],
+          "scalarRange": [
+            0,
+            1224.0673992673992
+          ],
+          "fullScalarRange": [
+            0,
+            1644
+          ],
+          "orientation": "Axial",
+          "sliceCount": 64,
+          "byteLength": 24903680,
+          "compressedByteLength": 20197938,
+          "featured": false
+        },
+        {
+          "id": "brain-03-ax-3d-space-iac-mpr-cor",
+          "datasetId": "brain",
+          "datasetTitle": "Brain MRI",
+          "anatomy": "Brain",
+          "description": "AX 3D SPACE IAC_MPR_Cor",
+          "encoding": "gzip",
+          "asset": "brain/03-ax-3d-space-iac-mpr-cor.volume",
+          "preview": "brain/03-ax-3d-space-iac-mpr-cor.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            528,
+            528,
+            40
+          ],
+          "spacing": [
+            0.2656,
+            0.2656,
+            2.0000001371703062
+          ],
+          "physicalSize": [
+            140.2368,
+            140.2368,
+            80.00000548681226
+          ],
+          "scalarRange": [
+            0,
+            1146.2349206349206
+          ],
+          "fullScalarRange": [
+            0,
+            1492
+          ],
+          "orientation": "Coronal",
+          "sliceCount": 40,
+          "byteLength": 11151360,
+          "compressedByteLength": 2492043,
+          "featured": false
+        },
+        {
+          "id": "brain-04-ax-diff-adc",
+          "datasetId": "brain",
+          "datasetTitle": "Brain MRI",
+          "anatomy": "Brain",
+          "description": "AX DIFF_ADC",
+          "encoding": "gzip",
+          "asset": "brain/04-ax-diff-adc.volume",
+          "preview": "brain/04-ax-diff-adc.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            352,
+            352,
+            38
+          ],
+          "spacing": [
+            0.653409,
+            0.653409,
+            3.999982444666699
+          ],
+          "physicalSize": [
+            229.999968,
+            229.999968,
+            151.99933289733457
+          ],
+          "scalarRange": [
+            0,
+            3007
+          ],
+          "fullScalarRange": [
+            0,
+            4095
+          ],
+          "orientation": "Axial",
+          "sliceCount": 38,
+          "byteLength": 4708352,
+          "compressedByteLength": 1216226,
+          "featured": false
+        },
+        {
+          "id": "brain-05-ax-diff-tracew",
+          "datasetId": "brain",
+          "datasetTitle": "Brain MRI",
+          "anatomy": "Brain",
+          "description": "AX DIFF_TRACEW",
+          "encoding": "gzip",
+          "asset": "brain/05-ax-diff-tracew.volume",
+          "preview": "brain/05-ax-diff-tracew.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            352,
+            352,
+            38
+          ],
+          "spacing": [
+            0.653409,
+            0.653409,
+            3.999982444666699
+          ],
+          "physicalSize": [
+            229.999968,
+            229.999968,
+            151.99933289733457
+          ],
+          "scalarRange": [
+            0,
+            547.1362637362637
+          ],
+          "fullScalarRange": [
+            0,
+            1439
+          ],
+          "orientation": "Axial",
+          "sliceCount": 38,
+          "byteLength": 4708352,
+          "compressedByteLength": 2424461,
+          "featured": false
+        },
+        {
+          "id": "brain-06-ax-diff-tracew",
+          "datasetId": "brain",
+          "datasetTitle": "Brain MRI",
+          "anatomy": "Brain",
+          "description": "AX DIFF_TRACEW",
+          "encoding": "gzip",
+          "asset": "brain/06-ax-diff-tracew.volume",
+          "preview": "brain/06-ax-diff-tracew.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            352,
+            352,
+            38
+          ],
+          "spacing": [
+            0.653409,
+            0.653409,
+            3.999982444666699
+          ],
+          "physicalSize": [
+            229.999968,
+            229.999968,
+            151.99933289733457
+          ],
+          "scalarRange": [
+            0,
+            104.07423687423687
+          ],
+          "fullScalarRange": [
+            0,
+            334
+          ],
+          "orientation": "Axial",
+          "sliceCount": 38,
+          "byteLength": 4708352,
+          "compressedByteLength": 1994320,
+          "featured": false
+        },
+        {
+          "id": "brain-07-ax-hemo",
+          "datasetId": "brain",
+          "datasetTitle": "Brain MRI",
+          "anatomy": "Brain",
+          "description": "AX HEMO",
+          "encoding": "gzip",
+          "asset": "brain/07-ax-hemo.volume",
+          "preview": "brain/07-ax-hemo.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            222,
+            272,
+            38
+          ],
+          "spacing": [
+            0.845588,
+            0.845588,
+            3.9999764740342982
+          ],
+          "physicalSize": [
+            187.720536,
+            229.999936,
+            151.99910601330333
+          ],
+          "scalarRange": [
+            0,
+            364.0224664224664
+          ],
+          "fullScalarRange": [
+            0,
+            617
+          ],
+          "orientation": "Axial",
+          "sliceCount": 38,
+          "byteLength": 2294592,
+          "compressedByteLength": 1431387,
+          "featured": false
+        },
+        {
+          "id": "brain-08-ax-t1",
+          "datasetId": "brain",
+          "datasetTitle": "Brain MRI",
+          "anatomy": "Brain",
+          "description": "AX T1",
+          "encoding": "gzip",
+          "asset": "brain/08-ax-t1.volume",
+          "preview": "brain/08-ax-t1.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            416,
+            512,
+            38
+          ],
+          "spacing": [
+            0.4492,
+            0.4492,
+            3.9999764740342947
+          ],
+          "physicalSize": [
+            186.8672,
+            229.9904,
+            151.9991060133032
+          ],
+          "scalarRange": [
+            0,
+            785.2307692307692
+          ],
+          "fullScalarRange": [
+            0,
+            990
+          ],
+          "orientation": "Axial",
+          "sliceCount": 38,
+          "byteLength": 8093696,
+          "compressedByteLength": 4169560,
+          "featured": false
+        },
+        {
+          "id": "brain-09-ax-t1-thins-iacs-post-fs",
+          "datasetId": "brain",
+          "datasetTitle": "Brain MRI",
+          "anatomy": "Brain",
+          "description": "AX T1 THINS IACS POST FS",
+          "encoding": "gzip",
+          "asset": "brain/09-ax-t1-thins-iacs-post-fs.volume",
+          "preview": "brain/09-ax-t1-thins-iacs-post-fs.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            448,
+            448,
+            15
+          ],
+          "spacing": [
+            0.4018,
+            0.4018,
+            2.750038461710595
+          ],
+          "physicalSize": [
+            180.00639999999999,
+            180.00639999999999,
+            41.250576925658926
+          ],
+          "scalarRange": [
+            0,
+            669.2166056166056
+          ],
+          "fullScalarRange": [
+            0,
+            1073
+          ],
+          "orientation": "Axial",
+          "sliceCount": 15,
+          "byteLength": 3010560,
+          "compressedByteLength": 2034794,
+          "featured": false
+        },
+        {
+          "id": "brain-10-ax-t2-fs",
+          "datasetId": "brain",
+          "datasetTitle": "Brain MRI",
+          "anatomy": "Brain",
+          "description": "AX T2 FS",
+          "encoding": "gzip",
+          "asset": "brain/10-ax-t2-fs.volume",
+          "preview": "brain/10-ax-t2-fs.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            416,
+            512,
+            38
+          ],
+          "spacing": [
+            0.4492,
+            0.4492,
+            3.9999764740342947
+          ],
+          "physicalSize": [
+            186.8672,
+            229.9904,
+            151.9991060133032
+          ],
+          "scalarRange": [
+            0,
+            562.0879120879121
+          ],
+          "fullScalarRange": [
+            0,
+            775
+          ],
+          "orientation": "Axial",
+          "sliceCount": 38,
+          "byteLength": 8093696,
+          "compressedByteLength": 4419838,
+          "featured": false
+        },
+        {
+          "id": "brain-11-cor-t2",
+          "datasetId": "brain",
+          "datasetTitle": "Brain MRI",
+          "anatomy": "Brain",
+          "description": "COR T2",
+          "encoding": "gzip",
+          "asset": "brain/11-cor-t2.volume",
+          "preview": "brain/11-cor-t2.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            512,
+            512,
+            36
+          ],
+          "spacing": [
+            0.3906,
+            0.3906,
+            5.500034790036693
+          ],
+          "physicalSize": [
+            199.9872,
+            199.9872,
+            198.00125244132096
+          ],
+          "scalarRange": [
+            0,
+            635.0769230769231
+          ],
+          "fullScalarRange": [
+            0,
+            1032
+          ],
+          "orientation": "Coronal",
+          "sliceCount": 36,
+          "byteLength": 9437184,
+          "compressedByteLength": 5278178,
+          "featured": false
+        },
+        {
+          "id": "brain-12-sag-t1",
+          "datasetId": "brain",
+          "datasetTitle": "Brain MRI",
+          "anatomy": "Brain",
+          "description": "SAG T1",
+          "encoding": "gzip",
+          "asset": "brain/12-sag-t1.volume",
+          "preview": "brain/12-sag-t1.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            512,
+            512,
+            28
+          ],
+          "spacing": [
+            0.4492,
+            0.4492,
+            5.499993423288998
+          ],
+          "physicalSize": [
+            229.9904,
+            229.9904,
+            153.99981585209196
+          ],
+          "scalarRange": [
+            0,
+            822.1269841269841
+          ],
+          "fullScalarRange": [
+            0,
+            1102
+          ],
+          "orientation": "Sagittal",
+          "sliceCount": 28,
+          "byteLength": 7340032,
+          "compressedByteLength": 3980420,
+          "featured": false
+        },
+        {
+          "id": "brain-13-t1-axial-fs-post",
+          "datasetId": "brain",
+          "datasetTitle": "Brain MRI",
+          "anatomy": "Brain",
+          "description": "T1 AXIAL FS POST",
+          "encoding": "gzip",
+          "asset": "brain/13-t1-axial-fs-post.volume",
+          "preview": "brain/13-t1-axial-fs-post.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            416,
+            512,
+            38
+          ],
+          "spacing": [
+            0.4492,
+            0.4492,
+            3.9999764740342947
+          ],
+          "physicalSize": [
+            186.8672,
+            229.9904,
+            151.9991060133032
+          ],
+          "scalarRange": [
+            0,
+            566.0315018315018
+          ],
+          "fullScalarRange": [
+            0,
+            967
+          ],
+          "orientation": "Axial",
+          "sliceCount": 38,
+          "byteLength": 8093696,
+          "compressedByteLength": 4352207,
+          "featured": false
+        },
+        {
+          "id": "brain-14-t1-post-fs-cor-thin-iac",
+          "datasetId": "brain",
+          "datasetTitle": "Brain MRI",
+          "anatomy": "Brain",
+          "description": "T1 POST FS COR THIN IAC",
+          "encoding": "gzip",
+          "asset": "brain/14-t1-post-fs-cor-thin-iac.volume",
+          "preview": "brain/14-t1-post-fs-cor-thin-iac.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            512,
+            512,
+            11
+          ],
+          "spacing": [
+            0.4492,
+            0.4492,
+            3.299995449385026
+          ],
+          "physicalSize": [
+            229.9904,
+            229.9904,
+            36.29994994323529
+          ],
+          "scalarRange": [
+            0,
+            509.15262515262515
+          ],
+          "fullScalarRange": [
+            0,
+            1220
+          ],
+          "orientation": "Coronal",
+          "sliceCount": 11,
+          "byteLength": 2883584,
+          "compressedByteLength": 1822903,
+          "featured": false
+        },
+        {
+          "id": "brain-15-t1-pre-cor-thin-iac",
+          "datasetId": "brain",
+          "datasetTitle": "Brain MRI",
+          "anatomy": "Brain",
+          "description": "T1 PRE COR THIN IAC",
+          "encoding": "gzip",
+          "asset": "brain/15-t1-pre-cor-thin-iac.volume",
+          "preview": "brain/15-t1-pre-cor-thin-iac.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            512,
+            512,
+            11
+          ],
+          "spacing": [
+            0.4492,
+            0.4492,
+            3.299995449385026
+          ],
+          "physicalSize": [
+            229.9904,
+            229.9904,
+            36.29994994323529
+          ],
+          "scalarRange": [
+            0,
+            738.1172161172161
+          ],
+          "fullScalarRange": [
+            0,
+            1590
+          ],
+          "orientation": "Coronal",
+          "sliceCount": 11,
+          "byteLength": 2883584,
+          "compressedByteLength": 1654051,
+          "featured": false
+        }
+      ]
+    },
+    {
+      "id": "shoulder",
+      "title": "Left Shoulder MRI",
+      "anatomy": "Shoulder",
+      "description": "Complete left shoulder MRI study without contrast",
+      "series": [
+        {
+          "id": "shoulder-01-cor-pd-frfse-fs",
+          "datasetId": "shoulder",
+          "datasetTitle": "Left Shoulder MRI",
+          "anatomy": "Shoulder",
+          "description": "Cor PD frFSE FS",
+          "encoding": "gzip",
+          "asset": "shoulder/01-cor-pd-frfse-fs.volume",
+          "preview": "shoulder/01-cor-pd-frfse-fs.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            512,
+            512,
+            32
+          ],
+          "spacing": [
+            0.332,
+            0.332,
+            3.5000227480157093
+          ],
+          "physicalSize": [
+            169.984,
+            169.984,
+            112.0007279365027
+          ],
+          "scalarRange": [
+            0,
+            2572.65811965812
+          ],
+          "fullScalarRange": [
+            0,
+            3703
+          ],
+          "orientation": "Coronal",
+          "sliceCount": 32,
+          "byteLength": 8388608,
+          "compressedByteLength": 3712914,
+          "featured": true
+        },
+        {
+          "id": "shoulder-02-ax-stir",
+          "datasetId": "shoulder",
+          "datasetTitle": "Left Shoulder MRI",
+          "anatomy": "Shoulder",
+          "description": "AX  STIR",
+          "encoding": "gzip",
+          "asset": "shoulder/02-ax-stir.volume",
+          "preview": "shoulder/02-ax-stir.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            512,
+            512,
+            46
+          ],
+          "spacing": [
+            0.332,
+            0.332,
+            3.500011274590129
+          ],
+          "physicalSize": [
+            169.984,
+            169.984,
+            161.00051863114595
+          ],
+          "scalarRange": [
+            0,
+            934.4957264957266
+          ],
+          "fullScalarRange": [
+            0,
+            2765
+          ],
+          "orientation": "Axial",
+          "sliceCount": 46,
+          "byteLength": 12058624,
+          "compressedByteLength": 6903326,
+          "featured": false
+        },
+        {
+          "id": "shoulder-03-ax-pd-fs",
+          "datasetId": "shoulder",
+          "datasetTitle": "Left Shoulder MRI",
+          "anatomy": "Shoulder",
+          "description": "AX PD FS",
+          "encoding": "gzip",
+          "asset": "shoulder/03-ax-pd-fs.volume",
+          "preview": "shoulder/03-ax-pd-fs.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            512,
+            512,
+            46
+          ],
+          "spacing": [
+            0.332,
+            0.332,
+            3.500011274590129
+          ],
+          "physicalSize": [
+            169.984,
+            169.984,
+            161.00051863114595
+          ],
+          "scalarRange": [
+            0,
+            3039.830036630037
+          ],
+          "fullScalarRange": [
+            0,
+            4076
+          ],
+          "orientation": "Axial",
+          "sliceCount": 46,
+          "byteLength": 12058624,
+          "compressedByteLength": 5505882,
+          "featured": false
+        },
+        {
+          "id": "shoulder-04-cor-t2",
+          "datasetId": "shoulder",
+          "datasetTitle": "Left Shoulder MRI",
+          "anatomy": "Shoulder",
+          "description": "COR T2",
+          "encoding": "gzip",
+          "asset": "shoulder/04-cor-t2.volume",
+          "preview": "shoulder/04-cor-t2.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            1024,
+            1024,
+            32
+          ],
+          "spacing": [
+            0.166,
+            0.166,
+            3.500022748015695
+          ],
+          "physicalSize": [
+            169.984,
+            169.984,
+            112.00072793650224
+          ],
+          "scalarRange": [
+            0,
+            4200.046153846154
+          ],
+          "fullScalarRange": [
+            0,
+            6363
+          ],
+          "orientation": "Coronal",
+          "sliceCount": 32,
+          "byteLength": 33554432,
+          "compressedByteLength": 14079662,
+          "featured": false
+        },
+        {
+          "id": "shoulder-05-sag-pd-frfse-fs",
+          "datasetId": "shoulder",
+          "datasetTitle": "Left Shoulder MRI",
+          "anatomy": "Shoulder",
+          "description": "Sag PD frFSE FS",
+          "encoding": "gzip",
+          "asset": "shoulder/05-sag-pd-frfse-fs.volume",
+          "preview": "shoulder/05-sag-pd-frfse-fs.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            512,
+            512,
+            39
+          ],
+          "spacing": [
+            0.332,
+            0.332,
+            3.499999469872982
+          ],
+          "physicalSize": [
+            169.984,
+            169.984,
+            136.4999793250463
+          ],
+          "scalarRange": [
+            0,
+            3351.5545787545784
+          ],
+          "fullScalarRange": [
+            0,
+            4632
+          ],
+          "orientation": "Coronal",
+          "sliceCount": 39,
+          "byteLength": 10223616,
+          "compressedByteLength": 4131978,
+          "featured": false
+        },
+        {
+          "id": "shoulder-06-sag-t1",
+          "datasetId": "shoulder",
+          "datasetTitle": "Left Shoulder MRI",
+          "anatomy": "Shoulder",
+          "description": "SAG T1",
+          "encoding": "gzip",
+          "asset": "shoulder/06-sag-t1.volume",
+          "preview": "shoulder/06-sag-t1.preview.png",
+          "previewFrames": 8,
+          "dimensions": [
+            1024,
+            1024,
+            39
+          ],
+          "spacing": [
+            0.166,
+            0.166,
+            3.499999469872975
+          ],
+          "physicalSize": [
+            169.984,
+            169.984,
+            136.499979325046
+          ],
+          "scalarRange": [
+            0,
+            12947.54481074481
+          ],
+          "fullScalarRange": [
+            0,
+            15284
+          ],
+          "orientation": "Coronal",
+          "sliceCount": 39,
+          "byteLength": 40894464,
+          "compressedByteLength": 9352146,
+          "featured": false
+        }
+      ]
+    }
+  ]
+}
