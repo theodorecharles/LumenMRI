@@ -235,12 +235,6 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       controls.zoomSpeed = 0.8
       controls.screenSpacePanning = true
 
-      const floor = new THREE.GridHelper(4, 32, 0x17303b, 0x101a21)
-      floor.position.y = -0.72
-      floor.material.transparent = true
-      floor.material.opacity = 0.25
-      scene.add(floor)
-
       const resizeObserver = new ResizeObserver(() => {
         const width = container.clientWidth
         const height = container.clientHeight

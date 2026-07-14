@@ -32,6 +32,27 @@ export const volumeFragmentShader = /* glsl */ `
   uniform float uClip;
   uniform vec4 uCrop;
 
+  float monotonicSlope(float before, float after) {
+    if (before * after <= 0.0) return 0.0;
+    return (2.0 * before * after) / (before + after);
+  }
+
+  float interpolateSlices(float value0, float value1, float value2, float value3, float t) {
+    float delta0 = value1 - value0;
+    float delta1 = value2 - value1;
+    float delta2 = value3 - value2;
+    float tangent1 = monotonicSlope(delta0, delta1);
+    float tangent2 = monotonicSlope(delta1, delta2);
+    float t2 = t * t;
+    float t3 = t2 * t;
+    float interpolated =
+      (2.0 * t3 - 3.0 * t2 + 1.0) * value1 +
+      (t3 - 2.0 * t2 + t) * tangent1 +
+      (-2.0 * t3 + 3.0 * t2) * value2 +
+      (t3 - t2) * tangent2;
+    return clamp(interpolated, min(value1, value2), max(value1, value2));
+  }
+
   float sampleVolume(vec3 uvw) {
     vec3 orientedUVW = vec3(uvw.x, 1.0 - uvw.y, uvw.z);
     vec3 voxel = clamp(orientedUVW, vec3(0.0), vec3(1.0)) * (uDimensions - vec3(1.0));
@@ -46,15 +67,7 @@ export const volumeFragmentShader = /* glsl */ `
     float value1 = texelFetch(uData, ivec3(inPlane, slice1), 0).r;
     float value2 = texelFetch(uData, ivec3(inPlane, slice2), 0).r;
     float value3 = texelFetch(uData, ivec3(inPlane, slice3), 0).r;
-    float t2 = t * t;
-    float t3 = t2 * t;
-    float reconstructed = 0.5 * (
-      2.0 * value1 +
-      (-value0 + value2) * t +
-      (2.0 * value0 - 5.0 * value1 + 4.0 * value2 - value3) * t2 +
-      (-value0 + 3.0 * value1 - 3.0 * value2 + value3) * t3
-    );
-    return clamp(reconstructed, 0.0, 1.0);
+    return interpolateSlices(value0, value1, value2, value3, t);
   }
 
   vec2 hitBox(vec3 origin, vec3 direction) {

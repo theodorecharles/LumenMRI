@@ -22,7 +22,7 @@ The homepage opens to the included scan library. Choose **Open scan** to inspect
 ## Features
 
 - Continuous Three.js ray-marched volumes with physical voxel spacing and dynamic camera fitting
-- Slice-axis-only interpolation to fill inter-layer gaps without blurring the in-plane MRI detail
+- Monotonic cubic slice interpolation that reconstructs inter-layer values without blurring the in-plane MRI detail
 - Diagnostic-style 2D slice canvas with orientation markers, layer position, window/level, slider, buttons, and scroll navigation
 - Linked 2D/3D split view with an optional highlighted slice plane
 - Interactive 2D crop ROI that clips the X/Y bounds across every 3D layer
