@@ -114,6 +114,12 @@ test('preserves sagittal physical proportions without clipping', async ({ page }
 })
 
 test('keeps the library and 2D viewer usable on a mobile viewport', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', {
+      configurable: true,
+      value: undefined,
+    })
+  })
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Scan library' })).toBeVisible()
@@ -121,6 +127,17 @@ test('keeps the library and 2D viewer usable on a mobile viewport', async ({ pag
   await expect(firstCard).toBeVisible()
   await firstCard.locator('button').click()
   await expect(page.locator('.viewer-canvas canvas')).toBeVisible({ timeout: 30_000 })
+  await page.getByRole('button', { name: 'Enter fullscreen' }).click()
+  await expect(page.locator('.stage-shell')).toHaveClass(/is-fullscreen/)
+  await expect(page.locator('.app-header')).toBeHidden()
+  await expect(page.locator('.control-panel')).toBeHidden()
+  await expect(page.getByRole('button', { name: 'Exit fullscreen' })).toBeVisible()
+  const fullscreenBox = await page.locator('.stage-shell').boundingBox()
+  expect(fullscreenBox?.width).toBeCloseTo(390, 0)
+  expect(fullscreenBox?.height).toBeCloseTo(844, 0)
+  await page.screenshot({ path: 'artifacts/mobile-volume-fullscreen.png', fullPage: true })
+  await page.getByRole('button', { name: 'Exit fullscreen' }).click()
+  await expect(page.locator('.stage-shell')).not.toHaveClass(/is-fullscreen/)
   await page.getByRole('tab', { name: /2D slice/ }).click()
   await expect(page.getByTestId('slice-canvas')).toBeVisible()
   await page.screenshot({ path: 'artifacts/mobile-slice-view.png', fullPage: true })

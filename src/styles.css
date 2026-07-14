@@ -467,6 +467,30 @@ button:disabled {
     #05080d;
 }
 
+.stage-shell.is-fullscreen,
+.stage-shell:fullscreen {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+}
+
+.stage-fullscreen .app-header,
+.stage-fullscreen .series-panel,
+.stage-fullscreen .control-panel,
+.stage-fullscreen .app-footer {
+  display: none;
+}
+
+.stage-shell.is-fullscreen .stage-toolbar,
+.stage-shell:fullscreen .stage-toolbar {
+  top: max(14px, env(safe-area-inset-top));
+  right: max(16px, env(safe-area-inset-right));
+  left: max(16px, env(safe-area-inset-left));
+}
+
 .viewer-canvas {
   position: absolute;
   inset: 0;

@@ -9,6 +9,7 @@ import {
   Layers3,
   LockKeyhole,
   Maximize2,
+  Minimize2,
   MousePointer2,
   Pause,
   Play,
@@ -73,6 +74,7 @@ export default function App() {
   const [cropBounds, setCropBounds] = useState<CropBounds>(FULL_CROP)
   const [cropEditing, setCropEditing] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
+  const [isStageFullscreen, setIsStageFullscreen] = useState(false)
 
   const workerBusy = progress.phase === 'scanning' || progress.phase === 'loading'
   const busy = workerBusy || openingId !== null
@@ -229,9 +231,31 @@ export default function App() {
   }, [volume])
 
   const toggleStageFullscreen = useCallback(() => {
-    if (document.fullscreenElement) void document.exitFullscreen()
-    else if (stageRef.current) void stageRef.current.requestFullscreen()
+    if (isStageFullscreen) {
+      setIsStageFullscreen(false)
+      if (document.fullscreenElement) void document.exitFullscreen()
+      return
+    }
+
+    // iPhone Safari does not consistently support element fullscreen for WebGL.
+    // Enter the app-level layout first, then enhance it with native fullscreen
+    // on browsers that support it.
+    setIsStageFullscreen(true)
+    const requestFullscreen = stageRef.current?.requestFullscreen
+    if (requestFullscreen) void requestFullscreen.call(stageRef.current).catch(() => undefined)
+  }, [isStageFullscreen])
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      if (!document.fullscreenElement) setIsStageFullscreen(false)
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
   }, [])
+
+  useEffect(() => {
+    if (screen !== 'viewer') setIsStageFullscreen(false)
+  }, [screen])
 
   const captureActiveView = useCallback(() => {
     if (viewerLayout === 'slice') sliceViewerRef.current?.capture()
@@ -245,13 +269,16 @@ export default function App() {
       if (event.key.toLowerCase() === 'f') toggleStageFullscreen()
       if (event.key.toLowerCase() === 's') captureActiveView()
       if (event.key.toLowerCase() === 'l') goHome()
+      if (event.key === 'Escape' && isStageFullscreen && !document.fullscreenElement) {
+        setIsStageFullscreen(false)
+      }
       if (event.key === '1') setViewerLayout('volume')
       if (event.key === '2') setViewerLayout('slice')
       if (event.key === '3') setViewerLayout('split')
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [captureActiveView, goHome, toggleStageFullscreen])
+  }, [captureActiveView, goHome, isStageFullscreen, toggleStageFullscreen])
 
   const onDrop = async (event: React.DragEvent) => {
     event.preventDefault()
@@ -261,7 +288,7 @@ export default function App() {
 
   return (
     <div
-      className="app-shell"
+      className={isStageFullscreen ? 'app-shell stage-fullscreen' : 'app-shell'}
       onDragEnter={(event) => {
         event.preventDefault()
         setIsDragging(true)
@@ -326,7 +353,10 @@ export default function App() {
             onOpen={openFolder}
           />
 
-          <main className="stage-shell" ref={stageRef}>
+          <main
+            className={isStageFullscreen ? 'stage-shell is-fullscreen' : 'stage-shell'}
+            ref={stageRef}
+          >
             {volume ? (
               <>
                 <div className="stage-toolbar">
@@ -384,7 +414,16 @@ export default function App() {
                       </>
                     ) : null}
                     <button className="icon-button" type="button" title="Save image (S)" onClick={captureActiveView}><Camera size={16} /></button>
-                    <button className="icon-button" type="button" title="Fullscreen (F)" onClick={toggleStageFullscreen}><Maximize2 size={16} /></button>
+                    <button
+                      className="icon-button fullscreen-button"
+                      type="button"
+                      aria-label={isStageFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+                      aria-pressed={isStageFullscreen}
+                      title={isStageFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'}
+                      onClick={toggleStageFullscreen}
+                    >
+                      {isStageFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                    </button>
                   </div>
                 </div>
 
