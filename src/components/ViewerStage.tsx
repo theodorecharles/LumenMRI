@@ -46,6 +46,8 @@ interface Runtime {
   volumeSize: [number, number, number]
   cropBounds: CropBounds
   visibleDepth: number
+  selectedSliceFraction: number
+  sliceHighlightRequested: boolean
   frame: number
   resizeObserver: ResizeObserver
 }
@@ -98,6 +100,12 @@ function recenterVisibleVolume(runtime: Runtime) {
   runtime.camera.position.add(targetDelta)
   ensureCameraFits(runtime)
   runtime.controls.update()
+}
+
+function updateSliceVisibility(runtime: Runtime) {
+  if (!runtime.sliceHighlight) return
+  runtime.sliceHighlight.visible =
+    runtime.sliceHighlightRequested && runtime.selectedSliceFraction <= runtime.visibleDepth + 0.0001
 }
 
 function ensureCameraFits(runtime: Runtime) {
@@ -261,6 +269,8 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         volumeSize: [1, 1, 1],
         cropBounds: { minX: 0, maxX: 1, minY: 0, maxY: 1 },
         visibleDepth: 1,
+        selectedSliceFraction: 0,
+        sliceHighlightRequested: false,
         frame: 0,
         resizeObserver,
       }
@@ -377,8 +387,13 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
           uniform sampler2D uSlice;
           uniform float uWindow;
           uniform float uLevel;
+          uniform vec4 uCrop;
           void main() {
-            float raw = texture(uSlice, vec2(vUv.x, 1.0 - vUv.y)).r;
+            vec2 croppedUv = vec2(
+              mix(uCrop.x, uCrop.y, vUv.x),
+              mix(uCrop.w, uCrop.z, vUv.y)
+            );
+            float raw = texture(uSlice, croppedUv).r;
             float low = uLevel - uWindow * 0.5;
             float value = clamp((raw - low) / max(0.015, uWindow), 0.0, 1.0);
             vec3 gray = vec3(value);
@@ -390,6 +405,12 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
           uSlice: { value: sliceTexture },
           uWindow: { value: volumeSettings.window },
           uLevel: { value: volumeSettings.level },
+          uCrop: { value: new THREE.Vector4(
+            cropBounds.minX,
+            cropBounds.maxX,
+            cropBounds.minY,
+            cropBounds.maxY,
+          ) },
         },
         side: THREE.DoubleSide,
         transparent: true,
@@ -452,10 +473,11 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       const start = safeIndex * width * height
       runtime.sliceTexture.image.data = volume.data.subarray(start, start + width * height)
       runtime.sliceTexture.needsUpdate = true
-      runtime.sliceHighlight.position.z = depth > 1
-        ? (safeIndex / (depth - 1) - 0.5) * runtime.volumeSize[2]
-        : 0
-      runtime.sliceHighlight.visible = showSliceHighlight
+      runtime.selectedSliceFraction = depth > 1 ? safeIndex / (depth - 1) : 0
+      runtime.sliceHighlightRequested = showSliceHighlight
+      runtime.sliceHighlight.position.z =
+        (runtime.selectedSliceFraction - 0.5) * runtime.volumeSize[2]
+      updateSliceVisibility(runtime)
     }, [showSliceHighlight, sliceIndex, volume])
 
     useEffect(() => {
@@ -476,9 +498,12 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         runtime.sliceHighlight.position.x = ((cropBounds.minX + cropBounds.maxX) * 0.5 - 0.5) * runtime.volumeSize[0]
         runtime.sliceHighlight.position.y = (0.5 - (cropBounds.minY + cropBounds.maxY) * 0.5) * runtime.volumeSize[1]
       }
+      const sliceCrop = runtime?.sliceMaterial?.uniforms.uCrop.value as THREE.Vector4 | undefined
+      sliceCrop?.set(cropBounds.minX, cropBounds.maxX, cropBounds.minY, cropBounds.maxY)
       if (runtime) {
         runtime.cropBounds = cropBounds
         runtime.visibleDepth = volumeSettings.clip
+        updateSliceVisibility(runtime)
         recenterVisibleVolume(runtime)
       }
     }, [cropBounds, volumeSettings.clip])
