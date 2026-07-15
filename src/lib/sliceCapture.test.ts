@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { compositeAnnotatedSlicePng } from './sliceCapture'
+import { compositeAnnotatedSlicePng, compositeAnnotatedVolumePng } from './sliceCapture'
 
 type DrawCall = { method: string; args: unknown[] }
 
@@ -123,6 +123,99 @@ describe('compositeAnnotatedSlicePng', () => {
       level: 0.4,
       labels: { top: 'S', right: 'P', bottom: 'I', left: 'A' },
       measurements: [],
+    })
+
+    expect(result).toBe('data:image/png;base64,SOURCE')
+    createElement.mockRestore()
+  })
+})
+
+describe('compositeAnnotatedVolumePng', () => {
+  it('composites the WebGL frame with volume metadata including crop', () => {
+    const { ctx, calls } = mockContext()
+    const createElement = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag !== 'canvas') return document.createElementNS('http://www.w3.org/1999/xhtml', tag)
+      const canvas = {
+        width: 0,
+        height: 0,
+        getContext: () => ctx,
+        toDataURL: () => 'data:image/png;base64,VOLUME',
+      }
+      return canvas as unknown as HTMLCanvasElement
+    })
+
+    const source = mockSource(120, 90)
+    const result = compositeAnnotatedVolumePng({
+      source,
+      seriesName: 'Ax 3D SPACE IAC',
+      orientation: 'Axial',
+      mode: 'enhanced',
+      dimensions: [256, 256, 96],
+      paletteName: 'thermal',
+      cropActive: true,
+    })
+
+    expect(result).toBe('data:image/png;base64,VOLUME')
+    expect(calls.some((call) => call.method === 'drawImage' && call.args[0] === source)).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'Ax 3D SPACE IAC')).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'Axial · Enhanced')).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === '256 × 256 × 96')).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'Palette thermal')).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'Crop active')).toBe(true)
+
+    createElement.mockRestore()
+  })
+
+  it('labels acquired mode and omits crop when inactive', () => {
+    const { ctx, calls } = mockContext()
+    const createElement = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag !== 'canvas') return document.createElementNS('http://www.w3.org/1999/xhtml', tag)
+      const canvas = {
+        width: 0,
+        height: 0,
+        getContext: () => ctx,
+        toDataURL: () => 'data:image/png;base64,ACQUIRED',
+      }
+      return canvas as unknown as HTMLCanvasElement
+    })
+
+    const source = mockSource()
+    compositeAnnotatedVolumePng({
+      source,
+      seriesName: 'Cor T2',
+      orientation: 'Coronal',
+      mode: 'acquired',
+      dimensions: [512, 512, 24],
+      paletteName: 'bone',
+      cropActive: false,
+    })
+
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'Coronal · Acquired')).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'Crop active')).toBe(false)
+
+    createElement.mockRestore()
+  })
+
+  it('falls back to the source data URL when the composite context is missing', () => {
+    const createElement = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag !== 'canvas') return document.createElementNS('http://www.w3.org/1999/xhtml', tag)
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => null,
+        toDataURL: () => 'data:image/png;base64,COMPOSITE',
+      } as unknown as HTMLCanvasElement
+    })
+
+    const source = mockSource(16, 16)
+    const result = compositeAnnotatedVolumePng({
+      source,
+      seriesName: 'Series',
+      orientation: 'Sagittal',
+      mode: 'acquired',
+      dimensions: [64, 64, 8],
+      paletteName: 'cyan',
+      cropActive: false,
     })
 
     expect(result).toBe('data:image/png;base64,SOURCE')

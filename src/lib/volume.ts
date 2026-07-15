@@ -18,6 +18,32 @@ export function formatBytes(megabytes: number): string {
   return `${megabytes.toFixed(megabytes >= 10 ? 0 : 1)} MB`
 }
 
+/** Mid-stack index for a volume of the given through-plane depth. */
+export function midSliceIndex(depth: number): number {
+  if (depth <= 0) return 0
+  return Math.floor((depth - 1) / 2)
+}
+
+/**
+ * Map a slice index from one stack depth to another by relative through-plane
+ * position. Used when hopping series so AX FLAIR → AX T1 keeps the same
+ * fractional depth instead of always jumping to mid-stack.
+ */
+export function mapRelativeSliceIndex(
+  previousIndex: number,
+  previousDepth: number,
+  nextDepth: number,
+): number {
+  if (nextDepth <= 0) return 0
+  if (nextDepth === 1) return 0
+  if (previousDepth <= 0) return midSliceIndex(nextDepth)
+  if (previousDepth === 1) return midSliceIndex(nextDepth)
+
+  const clampedPrev = Math.max(0, Math.min(previousDepth - 1, previousIndex))
+  const fraction = clampedPrev / (previousDepth - 1)
+  return Math.max(0, Math.min(nextDepth - 1, Math.round(fraction * (nextDepth - 1))))
+}
+
 export function createDemoVolume(size = 96): VolumeData {
   const width = size
   const height = Math.round(size * 1.06)

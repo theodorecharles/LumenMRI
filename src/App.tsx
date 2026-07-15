@@ -20,7 +20,7 @@ import {
 import { useDicomLoader } from './hooks/useDicomLoader'
 import { useVolumeReconstruction } from './hooks/useVolumeReconstruction'
 import { chooseDirectory, filesFromDrop } from './lib/fileAccess'
-import { createDemoVolume } from './lib/volume'
+import { createDemoVolume, mapRelativeSliceIndex, midSliceIndex } from './lib/volume'
 import {
   bundledSeriesSummary,
   loadBundledCatalog,
@@ -72,6 +72,9 @@ export default function App() {
   const sliceViewerRef = useRef<SliceViewerHandle>(null)
   const stageRef = useRef<HTMLElement>(null)
   const volumeCache = useRef(new Map<string, VolumeData>())
+  /** Through-plane depth of the last applied volume; null means no prior slice context. */
+  const previousDepthRef = useRef<number | null>(null)
+  const sliceIndexRef = useRef(0)
   const { series, volume, setVolume, progress, error, scanFiles, loadSeries } = useDicomLoader()
   const reconstruction = useVolumeReconstruction(volume)
   const [screen, setScreen] = useState<Screen>('library')
@@ -86,6 +89,7 @@ export default function App() {
   const [cameraProjection, setCameraProjection] = useState<'perspective' | 'isometric'>('perspective')
   const [viewerLayout, setViewerLayout] = useState<ViewerLayout>('volume')
   const [sliceIndex, setSliceIndex] = useState(0)
+  sliceIndexRef.current = sliceIndex
   const [showSliceHighlight, setShowSliceHighlight] = useState(false)
   const [cropBounds, setCropBounds] = useState<CropBounds>(FULL_CROP)
   const [cropEditing, setCropEditing] = useState(false)
@@ -132,9 +136,12 @@ export default function App() {
   }, [])
 
   // Terminal reconstruction failure: stay on acquired data, never leave Enhanced "Processing".
+  // Re-enable Enhanced when a later series reconstructs successfully so a prior error does not stick.
   useEffect(() => {
     if (reconstruction.status === 'error') {
       setReconstructionEnabled(false)
+    } else if (reconstruction.status === 'ready') {
+      setReconstructionEnabled(true)
     }
   }, [reconstruction.status])
 
@@ -263,8 +270,18 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!volume) return
-    setSliceIndex(Math.floor((volume.dimensions[2] - 1) / 2))
+    if (!volume) {
+      previousDepthRef.current = null
+      return
+    }
+    const nextDepth = volume.dimensions[2]
+    const previousDepth = previousDepthRef.current
+    if (previousDepth != null && previousDepth > 0) {
+      setSliceIndex(mapRelativeSliceIndex(sliceIndexRef.current, previousDepth, nextDepth))
+    } else {
+      setSliceIndex(midSliceIndex(nextDepth))
+    }
+    previousDepthRef.current = nextDepth
     setCropBounds(FULL_CROP)
     setCropEditing(false)
   }, [volume])

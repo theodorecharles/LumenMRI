@@ -9,6 +9,7 @@ import {
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { CropBounds, ReconstructedVolume, VolumeData, VolumeSettings } from '../types'
+import { compositeAnnotatedVolumePng } from '../lib/sliceCapture'
 import { normalizePhysicalSize, PALETTES } from '../lib/volume'
 import { volumeFragmentShader, volumeVertexShader } from '../rendering/shaders'
 
@@ -708,9 +709,19 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
           const runtime = runtimeRef.current
           if (!runtime) return
           runtime.renderer.render(runtime.scene, runtime.camera)
+          const reconstructed = reconstruction?.seriesId === volume.seriesId ? reconstruction : null
+          const dimensions = reconstructed?.dimensions ?? volume.dimensions
           const link = document.createElement('a')
           link.download = `lumen-${volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.png`
-          link.href = runtime.renderer.domElement.toDataURL('image/png')
+          link.href = compositeAnnotatedVolumePng({
+            source: runtime.renderer.domElement,
+            seriesName: volume.description,
+            orientation: volume.orientation,
+            mode: reconstructed ? 'enhanced' : 'acquired',
+            dimensions,
+            paletteName: volumeSettings.palette,
+            cropActive: isCropped(cropBounds),
+          })
           link.click()
         },
         toggleFullscreen: () => {
@@ -720,7 +731,15 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
           else void element.requestFullscreen()
         },
       }),
-      [volume.description],
+      [
+        cropBounds,
+        reconstruction,
+        volume.description,
+        volume.dimensions,
+        volume.orientation,
+        volume.seriesId,
+        volumeSettings.palette,
+      ],
     )
 
     useEffect(() => {
