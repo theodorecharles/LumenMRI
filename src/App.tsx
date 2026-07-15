@@ -140,10 +140,12 @@ export default function App() {
   }, [activeSeriesId, loadSeries, series])
 
   // Failed loads leave the previous volume in place. Revert the series highlight
-  // to the last successful volume (or clear it) so the panel matches the stage.
+  // to the last successful volume so the panel matches the stage. Skip when
+  // volume is null (first-load failure) — clearing activeSeriesId would re-fire
+  // the auto-recommend effect and infinite-retry a failing series.
   useEffect(() => {
-    if (progress.phase !== 'error') return
-    setActiveSeriesId(volume?.seriesId ?? null)
+    if (progress.phase !== 'error' || !volume) return
+    setActiveSeriesId(volume.seriesId)
   }, [progress.phase, volume])
 
   const pushViewerLocation = useCallback((id: string) => {
