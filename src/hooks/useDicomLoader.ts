@@ -13,10 +13,14 @@ const IDLE_PROGRESS: ScanProgress = {
   label: 'Ready',
 }
 
+export type LoadTarget = 'primary' | 'compare'
+
 export function useDicomLoader() {
   const workerRef = useRef<Worker | null>(null)
+  const loadTargetRef = useRef<LoadTarget>('primary')
   const [series, setSeries] = useState<SeriesSummary[]>([])
   const [volume, setVolume] = useState<VolumeData | null>(null)
+  const [compareVolume, setCompareVolume] = useState<VolumeData | null>(null)
   const [progress, setProgress] = useState<ScanProgress>(IDLE_PROGRESS)
   const [error, setError] = useState<string | null>(null)
 
@@ -44,8 +48,13 @@ export function useDicomLoader() {
           setProgress({ phase: 'loading', progress: message.progress, label: message.label })
           break
         case 'volume-ready':
-          setVolume(message.volume)
-          setProgress({ phase: 'ready', progress: 1, label: 'GPU volume ready' })
+          if (loadTargetRef.current === 'compare') {
+            setCompareVolume(message.volume)
+            setProgress({ phase: 'ready', progress: 1, label: 'Compare series ready' })
+          } else {
+            setVolume(message.volume)
+            setProgress({ phase: 'ready', progress: 1, label: 'GPU volume ready' })
+          }
           break
         case 'error':
           setError(message.message)
@@ -65,6 +74,8 @@ export function useDicomLoader() {
       setError(null)
       setSeries([])
       setVolume(null)
+      setCompareVolume(null)
+      loadTargetRef.current = 'primary'
       setProgress({ phase: 'scanning', progress: 0, label: 'Reading DICOM headers' })
       send({ type: 'scan', files })
     },
@@ -72,9 +83,14 @@ export function useDicomLoader() {
   )
 
   const loadSeries = useCallback(
-    (seriesId: string) => {
+    (seriesId: string, target: LoadTarget = 'primary') => {
       setError(null)
-      setProgress({ phase: 'loading', progress: 0, label: 'Preparing volume' })
+      loadTargetRef.current = target
+      setProgress({
+        phase: 'loading',
+        progress: 0,
+        label: target === 'compare' ? 'Preparing compare series' : 'Preparing volume',
+      })
       send({ type: 'load-series', seriesId })
     },
     [send],
@@ -84,9 +100,22 @@ export function useDicomLoader() {
     send({ type: 'reset' })
     setSeries([])
     setVolume(null)
+    setCompareVolume(null)
+    loadTargetRef.current = 'primary'
     setError(null)
     setProgress(IDLE_PROGRESS)
   }, [send])
 
-  return { series, volume, setVolume, progress, error, scanFiles, loadSeries, reset }
+  return {
+    series,
+    volume,
+    setVolume,
+    compareVolume,
+    setCompareVolume,
+    progress,
+    error,
+    scanFiles,
+    loadSeries,
+    reset,
+  }
 }

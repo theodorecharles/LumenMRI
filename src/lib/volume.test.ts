@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { createDemoVolume, normalizePhysicalSize } from './volume'
+import { createDemoVolume, linkedSliceIndex, normalizePhysicalSize } from './volume'
 import { planVolumeReconstruction, reconstructVolume } from './reconstructVolume'
 
 describe('volume utilities', () => {
   it('normalizes physical dimensions without changing their aspect ratio', () => {
     expect(normalizePhysicalSize([100, 200, 50])).toEqual([0.5, 1, 0.25])
+  })
+
+  it('maps linked slice indices by relative stack depth', () => {
+    expect(linkedSliceIndex(0, 38, 64)).toBe(0)
+    expect(linkedSliceIndex(37, 38, 64)).toBe(63)
+    expect(linkedSliceIndex(19, 38, 38)).toBe(19)
+    expect(linkedSliceIndex(0, 1, 10)).toBe(4)
+    expect(linkedSliceIndex(5, 10, 1)).toBe(0)
   })
 
   it('creates a non-empty, MRI-like demo volume', () => {

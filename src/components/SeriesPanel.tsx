@@ -5,12 +5,22 @@ import { formatBytes } from '../lib/volume'
 interface SeriesPanelProps {
   series: SeriesSummary[]
   activeId: string | null
+  compareId?: string | null
   busy: boolean
   onSelect: (series: SeriesSummary) => void
+  onSelectCompare?: (series: SeriesSummary) => void
   onOpen: () => void
 }
 
-export function SeriesPanel({ series, activeId, busy, onSelect, onOpen }: SeriesPanelProps) {
+export function SeriesPanel({
+  series,
+  activeId,
+  compareId = null,
+  busy,
+  onSelect,
+  onSelectCompare,
+  onOpen,
+}: SeriesPanelProps) {
   return (
     <aside className="series-panel" aria-label="MRI series">
       <div className="panel-heading series-heading">
@@ -23,32 +33,76 @@ export function SeriesPanel({ series, activeId, busy, onSelect, onOpen }: Series
         </button>
       </div>
 
+      {onSelectCompare ? (
+        <p className="series-compare-hint">
+          Click opens A · Alt-click or <b>B</b> sets compare series
+        </p>
+      ) : null}
+
       {series.length ? (
         <div className="series-list">
           {series.map((item, index) => {
-            const active = item.id === activeId
+            const isA = item.id === activeId
+            const isB = item.id === compareId
             return (
-              <button
-                className={active ? 'series-card active' : 'series-card'}
+              <div
+                className={[
+                  'series-card-row',
+                  isA ? 'is-a' : '',
+                  isB ? 'is-b' : '',
+                ].filter(Boolean).join(' ')}
                 key={item.id}
-                type="button"
-                disabled={busy || !item.supported}
-                onClick={() => onSelect(item)}
               >
-                <span className="series-index">
-                  {item.bundled ? 'EX' : String(index + 1).padStart(2, '0')}
-                </span>
-                <span className="series-copy">
-                  <b>{item.description}</b>
-                  <small>
-                    {item.bundled ? 'Included' : item.orientation} · {item.sliceCount} layers
-                  </small>
-                  <i>
-                    {item.columns}×{item.rows} · {formatBytes(item.estimatedMegabytes)} GPU
-                  </i>
-                </span>
-                {active ? <Check size={16} /> : <ChevronRight size={16} />}
-              </button>
+                <button
+                  className={isA || isB ? 'series-card active' : 'series-card'}
+                  type="button"
+                  disabled={busy || !item.supported}
+                  title={
+                    onSelectCompare
+                      ? 'Open as primary (A). Alt-click to set as compare (B).'
+                      : undefined
+                  }
+                  onClick={(event) => {
+                    if (onSelectCompare && (event.altKey || event.metaKey)) {
+                      event.preventDefault()
+                      onSelectCompare(item)
+                      return
+                    }
+                    onSelect(item)
+                  }}
+                >
+                  <span className="series-index">
+                    {item.bundled ? 'EX' : String(index + 1).padStart(2, '0')}
+                  </span>
+                  <span className="series-copy">
+                    <b>
+                      {item.description}
+                      {isA ? <span className="series-slot-badge slot-a">A</span> : null}
+                      {isB ? <span className="series-slot-badge slot-b">B</span> : null}
+                    </b>
+                    <small>
+                      {item.bundled ? 'Included' : item.orientation} · {item.sliceCount} layers
+                    </small>
+                    <i>
+                      {item.columns}×{item.rows} · {formatBytes(item.estimatedMegabytes)} GPU
+                    </i>
+                  </span>
+                  {isA && !isB ? <Check size={16} /> : <ChevronRight size={16} />}
+                </button>
+                {onSelectCompare ? (
+                  <button
+                    className={isB ? 'series-set-b active' : 'series-set-b'}
+                    type="button"
+                    disabled={busy || !item.supported || item.id === activeId}
+                    title="Set as compare series (B)"
+                    aria-label={`Set ${item.description} as compare series B`}
+                    aria-pressed={isB}
+                    onClick={() => onSelectCompare(item)}
+                  >
+                    B
+                  </button>
+                ) : null}
+              </div>
             )
           })}
         </div>

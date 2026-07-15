@@ -38,6 +38,10 @@ interface SliceViewerProps {
   onCropEditingChange: (editing: boolean) => void
   /** Used to pause cine when the viewer layout changes. */
   viewerLayout?: string
+  /** Optional pane label for compare layout (A / B). */
+  paneLabel?: string
+  /** Hide 3D crop controls (compare layout). Default true. */
+  showCropTools?: boolean
 }
 
 interface CanvasRect {
@@ -177,6 +181,8 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     cropEditing,
     onCropEditingChange,
     viewerLayout,
+    paneLabel,
+    showCropTools = true,
   }, forwardedRef) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const viewportRef = useRef<HTMLDivElement>(null)
@@ -573,11 +579,17 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
 
     return (
       <section
-        className="slice-viewer"
-        aria-label="2D DICOM slice viewer"
+        className={paneLabel ? `slice-viewer pane-${paneLabel.toLowerCase()}` : 'slice-viewer'}
+        aria-label={paneLabel ? `2D DICOM slice viewer ${paneLabel}` : '2D DICOM slice viewer'}
+        data-pane={paneLabel || undefined}
         onWheel={handleWheel}
       >
         <div className="slice-viewport" ref={viewportRef}>
+          {paneLabel ? (
+            <span className={`compare-pane-badge pane-${paneLabel.toLowerCase()}`} aria-hidden="true">
+              {paneLabel}
+            </span>
+          ) : null}
           <div
             className={`slice-stage${canPan ? ' pannable' : ''}${panning ? ' panning' : ''}${windowLevelDrag ? ' window-leveling' : ''}`}
             ref={stageRef}
@@ -788,37 +800,39 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
               ))}
             </select>
           </label>
-          <div className="slice-crop-actions">
-            <button
-              className={cropEditing ? 'active' : ''}
-              type="button"
-              aria-pressed={cropEditing}
-              onClick={() => {
-                setMeasurementTool(null)
-                setMeasurementDraft(null)
-                onCropEditingChange(!cropEditing)
-              }}
-            >
-              <Crop size={14} /><span>Crop 3D</span>
-            </button>
-            {cropped ? (
+          {showCropTools ? (
+            <div className="slice-crop-actions">
               <button
+                className={cropEditing ? 'active' : ''}
                 type="button"
-                aria-label="Reset volume crop"
-                title="Reset volume crop"
-                onClick={() => onCropChange({
-                  minX: 0,
-                  maxX: 1,
-                  minY: 0,
-                  maxY: 1,
-                  minZ: 0,
-                  maxZ: 1,
-                })}
+                aria-pressed={cropEditing}
+                onClick={() => {
+                  setMeasurementTool(null)
+                  setMeasurementDraft(null)
+                  onCropEditingChange(!cropEditing)
+                }}
               >
-                <RotateCcw size={13} />
+                <Crop size={14} /><span>Crop 3D</span>
               </button>
-            ) : null}
-          </div>
+              {cropped ? (
+                <button
+                  type="button"
+                  aria-label="Reset volume crop"
+                  title="Reset volume crop"
+                  onClick={() => onCropChange({
+                    minX: 0,
+                    maxX: 1,
+                    minY: 0,
+                    maxY: 1,
+                    minZ: 0,
+                    maxZ: 1,
+                  })}
+                >
+                  <RotateCcw size={13} />
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <output>{safeIndex + 1}<small> / {depth}</small></output>
         </div>
       </section>

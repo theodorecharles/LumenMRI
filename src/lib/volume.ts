@@ -18,6 +18,15 @@ export function formatBytes(megabytes: number): string {
   return `${megabytes.toFixed(megabytes >= 10 ? 0 : 1)} MB`
 }
 
+/** Map a slice index across stacks by relative depth (0 = first, 1 = last). */
+export function linkedSliceIndex(sourceIndex: number, sourceDepth: number, targetDepth: number): number {
+  if (targetDepth <= 1) return 0
+  if (sourceDepth <= 1) return Math.floor((targetDepth - 1) / 2)
+  const clamped = Math.max(0, Math.min(sourceDepth - 1, sourceIndex))
+  const fraction = clamped / (sourceDepth - 1)
+  return Math.round(fraction * (targetDepth - 1))
+}
+
 export function createDemoVolume(size = 96): VolumeData {
   const width = size
   const height = Math.round(size * 1.06)
