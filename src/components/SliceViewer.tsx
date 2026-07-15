@@ -12,6 +12,7 @@ import {
   SquareDashed,
   Trash2,
 } from 'lucide-react'
+import { compositeAnnotatedSlicePng } from '../lib/sliceCapture'
 import type { CropBounds, VolumeData, VolumeSettings } from '../types'
 
 const MIN_VIEW_SCALE = 1
@@ -133,6 +134,37 @@ function orientationLabels(orientation: string) {
   return { top: 'A', right: 'L', bottom: 'P', left: 'R' }
 }
 
+function measurementSummary(
+  measurement: Measurement,
+  volume: VolumeData,
+  width: number,
+  height: number,
+) {
+  const deltaX = (measurement.end.x - measurement.start.x) * Math.max(1, width - 1)
+  const deltaY = (measurement.end.y - measurement.start.y) * Math.max(1, height - 1)
+  if (measurement.tool === 'distance') {
+    const millimeters = Math.hypot(deltaX * volume.spacing[0], deltaY * volume.spacing[1])
+    return `${millimeters < 10 ? millimeters.toFixed(1) : millimeters.toFixed(0)} mm`
+  }
+
+  const minPixelX = Math.max(0, Math.min(width - 1, Math.floor(Math.min(measurement.start.x, measurement.end.x) * width)))
+  const maxPixelX = Math.max(minPixelX, Math.min(width - 1, Math.ceil(Math.max(measurement.start.x, measurement.end.x) * width) - 1))
+  const minPixelY = Math.max(0, Math.min(height - 1, Math.floor(Math.min(measurement.start.y, measurement.end.y) * height)))
+  const maxPixelY = Math.max(minPixelY, Math.min(height - 1, Math.ceil(Math.max(measurement.start.y, measurement.end.y) * height) - 1))
+  let signal = 0
+  let count = 0
+  const sliceOffset = measurement.slice * width * height
+  for (let y = minPixelY; y <= maxPixelY; y += 1) {
+    for (let x = minPixelX; x <= maxPixelX; x += 1) {
+      signal += volume.data[sliceOffset + y * width + x]
+      count += 1
+    }
+  }
+  const area = count * volume.spacing[0] * volume.spacing[1]
+  const mean = count ? signal / count : 0
+  return `${area < 100 ? area.toFixed(1) : area.toFixed(0)} mm² · μ ${mean.toFixed(0)}`
+}
+
 export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
   function SliceViewer({
     volume,
@@ -175,13 +207,43 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         capture: () => {
           const canvas = canvasRef.current
           if (!canvas) return
+          const current = measurements.filter((measurement) => measurement.slice === safeIndex)
+          const visible = measurementDraft?.slice === safeIndex
+            ? [...current, measurementDraft]
+            : current
           const link = document.createElement('a')
           link.download = `lumen-${volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-slice-${safeIndex + 1}.png`
-          link.href = canvas.toDataURL('image/png')
+          link.href = compositeAnnotatedSlicePng({
+            source: canvas,
+            seriesName: volume.description,
+            sliceIndex: safeIndex,
+            sliceCount: depth,
+            window: volumeSettings.window,
+            level: volumeSettings.level,
+            labels,
+            measurements: visible.map((measurement) => ({
+              id: measurement.id,
+              tool: measurement.tool,
+              start: measurement.start,
+              end: measurement.end,
+              label: measurementSummary(measurement, volume, width, height),
+            })),
+          })
           link.click()
         },
       }),
-      [safeIndex, volume.description],
+      [
+        depth,
+        height,
+        labels,
+        measurementDraft,
+        measurements,
+        safeIndex,
+        volume,
+        volumeSettings.level,
+        volumeSettings.window,
+        width,
+      ],
     )
 
     useEffect(() => {
@@ -498,32 +560,6 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       if (next) onCropEditingChange(false)
     }
 
-    const measurementSummary = (measurement: Measurement) => {
-      const deltaX = (measurement.end.x - measurement.start.x) * Math.max(1, width - 1)
-      const deltaY = (measurement.end.y - measurement.start.y) * Math.max(1, height - 1)
-      if (measurement.tool === 'distance') {
-        const millimeters = Math.hypot(deltaX * volume.spacing[0], deltaY * volume.spacing[1])
-        return `${millimeters < 10 ? millimeters.toFixed(1) : millimeters.toFixed(0)} mm`
-      }
-
-      const minPixelX = Math.max(0, Math.min(width - 1, Math.floor(Math.min(measurement.start.x, measurement.end.x) * width)))
-      const maxPixelX = Math.max(minPixelX, Math.min(width - 1, Math.ceil(Math.max(measurement.start.x, measurement.end.x) * width) - 1))
-      const minPixelY = Math.max(0, Math.min(height - 1, Math.floor(Math.min(measurement.start.y, measurement.end.y) * height)))
-      const maxPixelY = Math.max(minPixelY, Math.min(height - 1, Math.ceil(Math.max(measurement.start.y, measurement.end.y) * height) - 1))
-      let signal = 0
-      let count = 0
-      const sliceOffset = measurement.slice * width * height
-      for (let y = minPixelY; y <= maxPixelY; y += 1) {
-        for (let x = minPixelX; x <= maxPixelX; x += 1) {
-          signal += volume.data[sliceOffset + y * width + x]
-          count += 1
-        }
-      }
-      const area = count * volume.spacing[0] * volume.spacing[1]
-      const mean = count ? signal / count : 0
-      return `${area < 100 ? area.toFixed(1) : area.toFixed(0)} mm² · μ ${mean.toFixed(0)}`
-    }
-
     const currentMeasurements = measurements.filter((measurement) => measurement.slice === safeIndex)
     const visibleMeasurements = measurementDraft?.slice === safeIndex
       ? [...currentMeasurements, measurementDraft]
@@ -625,7 +661,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                             top: `${Math.max(0.05, Math.min(0.95, labelY)) * 100}%`,
                           }}
                         >
-                          {measurementSummary(measurement)}
+                          {measurementSummary(measurement, volume, width, height)}
                         </span>
                       )
                     })}
