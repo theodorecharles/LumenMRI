@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronUp,
   Crop,
+  Crosshair,
   Maximize2,
   MousePointer2,
   Pause,
@@ -12,6 +13,7 @@ import {
   SquareDashed,
   Trash2,
 } from 'lucide-react'
+import { formatProbeScalar, samplePixelAt, type PixelProbeSample } from '../lib/pixelProbe'
 import { compositeAnnotatedSlicePng } from '../lib/sliceCapture'
 import type { CropBounds, VolumeData, VolumeSettings } from '../types'
 
@@ -73,6 +75,14 @@ interface Measurement {
   slice: number
   start: MeasurementPoint
   end: MeasurementPoint
+}
+
+interface PinnedProbe {
+  id: number
+  slice: number
+  x: number
+  y: number
+  sample: PixelProbeSample
 }
 
 type WindowLevelInteraction = {
@@ -183,14 +193,22 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const stageRef = useRef<HTMLDivElement>(null)
     const interactionRef = useRef<PointerInteraction | null>(null)
     const measurementIdRef = useRef(0)
+    const probeIdRef = useRef(0)
     const sliceIndexRef = useRef(sliceIndex)
     const viewRef = useRef<ViewTransform>(FIT_VIEW)
     const [canvasRect, setCanvasRect] = useState<CanvasRect | null>(null)
     const [view, setView] = useState<ViewTransform>(FIT_VIEW)
     const [panning, setPanning] = useState(false)
     const [measurementTool, setMeasurementTool] = useState<MeasurementTool | null>(null)
+    const [probeTool, setProbeTool] = useState(false)
     const [measurements, setMeasurements] = useState<Measurement[]>([])
     const [measurementDraft, setMeasurementDraft] = useState<Measurement | null>(null)
+    const [probeHover, setProbeHover] = useState<{
+      x: number
+      y: number
+      sample: PixelProbeSample
+    } | null>(null)
+    const [pinnedProbes, setPinnedProbes] = useState<PinnedProbe[]>([])
     const [windowLevelDrag, setWindowLevelDrag] = useState<{ window: number; level: number } | null>(null)
     const [cinePlaying, setCinePlaying] = useState(false)
     const [cineFps, setCineFps] = useState<CineFps>(10)
@@ -296,6 +314,9 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       setMeasurements([])
       setMeasurementDraft(null)
       setMeasurementTool(null)
+      setProbeTool(false)
+      setProbeHover(null)
+      setPinnedProbes([])
       interactionRef.current = null
       setCinePlaying(false)
       setView(FIT_VIEW)
@@ -312,8 +333,26 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
 
     useEffect(() => {
       setMeasurementDraft(null)
+      setProbeHover(null)
       if (interactionRef.current?.type === 'measurement') interactionRef.current = null
     }, [safeIndex])
+
+    // Keep live probe display gray in sync when W/L sliders change under a parked cursor.
+    useEffect(() => {
+      setProbeHover((current) => {
+        if (!current) return null
+        const sample = samplePixelAt(
+          volume,
+          safeIndex,
+          current.x,
+          current.y,
+          volumeSettings.window,
+          volumeSettings.level,
+        )
+        if (!sample) return null
+        return { x: current.x, y: current.y, sample }
+      })
+    }, [safeIndex, volume, volumeSettings.level, volumeSettings.window])
 
     useEffect(() => {
       if (!cinePlaying || depth <= 1) return
@@ -367,8 +406,55 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         startLevel: volumeSettings.level,
       }
       setWindowLevelDrag({ window: volumeSettings.window, level: volumeSettings.level })
+      setProbeHover(null)
       event.currentTarget.setPointerCapture(event.pointerId)
       event.preventDefault()
+    }
+
+    const pinProbeAt = (point: MeasurementPoint): PixelProbeSample | null => {
+      const sample = samplePixelAt(
+        volume,
+        safeIndex,
+        point.x,
+        point.y,
+        volumeSettings.window,
+        volumeSettings.level,
+      )
+      if (!sample) return null
+      probeIdRef.current += 1
+      setPinnedProbes((current) => [
+        ...current,
+        {
+          id: probeIdRef.current,
+          slice: safeIndex,
+          x: point.x,
+          y: point.y,
+          sample,
+        },
+      ])
+      return sample
+    }
+
+    const updateProbeHover = (event: React.PointerEvent<HTMLDivElement>) => {
+      // Hide while panning, measuring, cropping drag, or window/level drag.
+      if (interactionRef.current || measurementDraft || windowLevelDrag || panning) {
+        setProbeHover(null)
+        return
+      }
+      const point = cropPoint(event)
+      const sample = samplePixelAt(
+        volume,
+        safeIndex,
+        point.x,
+        point.y,
+        volumeSettings.window,
+        volumeSettings.level,
+      )
+      if (!sample) {
+        setProbeHover(null)
+        return
+      }
+      setProbeHover({ x: point.x, y: point.y, sample })
     }
 
     const beginInteraction = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -380,6 +466,12 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       if (event.button !== 0) return
 
       const point = cropPoint(event)
+      if (probeTool) {
+        const sample = pinProbeAt(point)
+        if (sample) setProbeHover({ x: point.x, y: point.y, sample })
+        event.preventDefault()
+        return
+      }
       if (measurementTool) {
         const draft: Measurement = {
           id: -1,
@@ -395,6 +487,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
           start: point,
         }
         setMeasurementDraft(draft)
+        setProbeHover(null)
         event.currentTarget.setPointerCapture(event.pointerId)
         return
       }
@@ -432,7 +525,11 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
 
     const updateInteraction = (event: React.PointerEvent<HTMLDivElement>) => {
       const interaction = interactionRef.current
-      if (!interaction) return
+      if (!interaction) {
+        updateProbeHover(event)
+        return
+      }
+      if (probeHover) setProbeHover(null)
       if (interaction.type === 'window-level') {
         const scaleX = Math.max(120, canvasRect?.width ?? 240)
         const scaleY = Math.max(120, canvasRect?.height ?? 240)
@@ -530,6 +627,11 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       interactionRef.current = null
       setMeasurementDraft(null)
       setWindowLevelDrag(null)
+      setProbeHover(null)
+    }
+
+    const clearProbeHover = () => {
+      setProbeHover(null)
     }
 
     const handleWheel = (event: React.WheelEvent<HTMLElement>) => {
@@ -556,6 +658,16 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       const next = measurementTool === tool ? null : tool
       setMeasurementTool(next)
       setMeasurementDraft(null)
+      setProbeTool(false)
+      interactionRef.current = null
+      if (next) onCropEditingChange(false)
+    }
+
+    const toggleProbeTool = () => {
+      const next = !probeTool
+      setProbeTool(next)
+      setMeasurementTool(null)
+      setMeasurementDraft(null)
       interactionRef.current = null
       if (next) onCropEditingChange(false)
     }
@@ -564,12 +676,25 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const visibleMeasurements = measurementDraft?.slice === safeIndex
       ? [...currentMeasurements, measurementDraft]
       : currentMeasurements
+    const currentPinnedProbes = pinnedProbes.filter((probe) => probe.slice === safeIndex)
+    const hasSliceAnnotations = currentMeasurements.length > 0 || currentPinnedProbes.length > 0
+
+    const clearSliceAnnotations = () => {
+      setMeasurements((current) => current.filter((measurement) => measurement.slice !== safeIndex))
+      setPinnedProbes((current) => current.filter((probe) => probe.slice !== safeIndex))
+    }
 
     const cropped = cropBounds.minX > 0.001 || cropBounds.maxX < 0.999 ||
       cropBounds.minY > 0.001 || cropBounds.maxY < 0.999 ||
       cropBounds.minZ > 0.001 || cropBounds.maxZ < 0.999
 
-    const canPan = view.scale > MIN_VIEW_SCALE && !cropEditing && !measurementTool
+    const canPan = view.scale > MIN_VIEW_SCALE && !cropEditing && !measurementTool && !probeTool
+    const probeBlocked = Boolean(
+      windowLevelDrag || panning || measurementDraft || interactionRef.current,
+    )
+    const liveProbe = !probeBlocked ? probeHover : null
+    const showScalar = Math.abs(volume.scalarRange[1] - volume.scalarRange[0] - 255) > 1
+      || Math.abs(volume.scalarRange[0]) > 0.5
 
     return (
       <section
@@ -579,23 +704,25 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       >
         <div className="slice-viewport" ref={viewportRef}>
           <div
-            className={`slice-stage${canPan ? ' pannable' : ''}${panning ? ' panning' : ''}${windowLevelDrag ? ' window-leveling' : ''}`}
+            className={`slice-stage${canPan ? ' pannable' : ''}${panning ? ' panning' : ''}${windowLevelDrag ? ' window-leveling' : ''}${probeTool ? ' probing' : ''}`}
             ref={stageRef}
             data-testid="slice-stage"
             style={{
               transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
               ...(windowLevelDrag ? { cursor: 'ns-resize' } : null),
+              ...(probeTool && !windowLevelDrag ? { cursor: 'crosshair' } : null),
             }}
             onPointerDown={beginInteraction}
             onPointerMove={updateInteraction}
             onPointerUp={finishInteraction}
             onPointerCancel={cancelInteraction}
+            onPointerLeave={clearProbeHover}
             onContextMenu={(event) => event.preventDefault()}
           >
             <canvas ref={canvasRef} data-testid="slice-canvas" aria-label={`Slice ${safeIndex + 1} of ${depth}`} />
             {canvasRect ? (
               <div
-                className={`crop-overlay${cropEditing ? ' editing' : ''}${measurementTool ? ' measuring' : ''}${windowLevelDrag ? ' window-leveling' : ''}${canPan ? ' panning-ready' : ''}`}
+                className={`crop-overlay${cropEditing ? ' editing' : ''}${measurementTool ? ' measuring' : ''}${probeTool ? ' probing' : ''}${windowLevelDrag ? ' window-leveling' : ''}${canPan ? ' panning-ready' : ''}`}
                 data-testid="crop-overlay"
                 style={canvasRect}
               >
@@ -673,6 +800,51 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                     <span>L {Math.round(windowLevelDrag.level * 255)}</span>
                   </div>
                 ) : null}
+                {currentPinnedProbes.map((probe) => (
+                  <div
+                    key={probe.id}
+                    className="pixel-probe-pin"
+                    data-testid="pixel-probe-pin"
+                    style={{
+                      left: `${probe.x * 100}%`,
+                      top: `${probe.y * 100}%`,
+                    }}
+                  >
+                    <i className="pixel-probe-cross" aria-hidden="true" />
+                    <span className="pixel-probe-pin-label">
+                      I {probe.sample.intensity}
+                      {showScalar ? ` · ${formatProbeScalar(probe.sample.scalar)}` : ''}
+                      <small>
+                        c {probe.sample.col} · r {probe.sample.row}
+                      </small>
+                    </span>
+                  </div>
+                ))}
+                {liveProbe ? (
+                  <div
+                    className="pixel-probe-readout"
+                    data-testid="pixel-probe-readout"
+                    role="status"
+                    aria-live="polite"
+                    style={{
+                      left: `${Math.min(0.72, Math.max(0.02, liveProbe.x + 0.03)) * 100}%`,
+                      top: `${Math.min(0.78, Math.max(0.02, liveProbe.y + 0.03)) * 100}%`,
+                    }}
+                  >
+                    <span>
+                      I {liveProbe.sample.intensity}
+                      <em>D {liveProbe.sample.display}</em>
+                    </span>
+                    {showScalar ? (
+                      <span className="pixel-probe-scalar">
+                        {formatProbeScalar(liveProbe.sample.scalar)}
+                      </span>
+                    ) : null}
+                    <span className="pixel-probe-coords">
+                      c {liveProbe.sample.col} · r {liveProbe.sample.row}
+                    </span>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -699,10 +871,21 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
             </button>
             <button
               type="button"
+              className={probeTool ? 'active' : ''}
+              aria-label="Pixel intensity probe"
+              aria-pressed={probeTool}
+              title="Probe pixel intensity (hover live; click to pin)"
+              data-testid="probe-tool"
+              onClick={toggleProbeTool}
+            >
+              <Crosshair size={14} /><span>Probe</span>
+            </button>
+            <button
+              type="button"
               aria-label="Clear measurements on slice"
-              title="Clear measurements on this slice"
-              disabled={!currentMeasurements.length}
-              onClick={() => setMeasurements((current) => current.filter((measurement) => measurement.slice !== safeIndex))}
+              title="Clear measurements and pins on this slice"
+              disabled={!hasSliceAnnotations}
+              onClick={clearSliceAnnotations}
             >
               <Trash2 size={13} />
             </button>
@@ -796,6 +979,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
               onClick={() => {
                 setMeasurementTool(null)
                 setMeasurementDraft(null)
+                setProbeTool(false)
                 onCropEditingChange(!cropEditing)
               }}
             >
