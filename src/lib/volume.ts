@@ -13,6 +13,52 @@ export function normalizePhysicalSize(size: Vec3Tuple): Vec3Tuple {
   return [size[0] / largest, size[1] / largest, size[2] / largest]
 }
 
+/** Map local Z in a centered volume box (−sizeZ/2…+sizeZ/2) to a stack index. */
+export function sliceIndexFromLocalZ(localZ: number, sizeZ: number, depth: number): number {
+  if (depth <= 1 || sizeZ <= 0) return 0
+  const fraction = Math.max(0, Math.min(1, localZ / sizeZ + 0.5))
+  return Math.round(fraction * (depth - 1))
+}
+
+/**
+ * Ray vs axis-aligned box centered at origin with full size (sizeX, sizeY, sizeZ).
+ * Returns local Z of the chord midpoint (stable stack pick from oblique views).
+ */
+export function localZFromVolumeRay(
+  origin: { x: number; y: number; z: number },
+  direction: { x: number; y: number; z: number },
+  size: [number, number, number],
+): number | null {
+  const half = [size[0] * 0.5, size[1] * 0.5, size[2] * 0.5] as const
+  const o = [origin.x, origin.y, origin.z] as const
+  const d = [direction.x, direction.y, direction.z] as const
+  let tNear = -Infinity
+  let tFar = Infinity
+  for (let axis = 0; axis < 3; axis += 1) {
+    const min = -half[axis]
+    const max = half[axis]
+    if (Math.abs(d[axis]) < 1e-8) {
+      if (o[axis] < min || o[axis] > max) return null
+      continue
+    }
+    let t1 = (min - o[axis]) / d[axis]
+    let t2 = (max - o[axis]) / d[axis]
+    if (t1 > t2) {
+      const swap = t1
+      t1 = t2
+      t2 = swap
+    }
+    tNear = Math.max(tNear, t1)
+    tFar = Math.min(tFar, t2)
+    if (tNear > tFar) return null
+  }
+  if (tFar < 0) return null
+  const t0 = Math.max(0, tNear)
+  if (tFar < t0) return null
+  const tMid = (t0 + tFar) * 0.5
+  return o[2] + d[2] * tMid
+}
+
 export function formatBytes(megabytes: number): string {
   if (megabytes < 1) return `${Math.max(1, Math.round(megabytes * 1024))} KB`
   return `${megabytes.toFixed(megabytes >= 10 ? 0 : 1)} MB`

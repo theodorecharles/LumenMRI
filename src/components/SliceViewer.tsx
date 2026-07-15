@@ -38,6 +38,8 @@ interface SliceViewerProps {
   onCropEditingChange: (editing: boolean) => void
   /** Used to pause cine when the viewer layout changes. */
   viewerLayout?: string
+  /** Incremented when the linked 3D view jumps the stack — triggers a brief flash. */
+  sliceJumpFlash?: number
 }
 
 interface CanvasRect {
@@ -177,6 +179,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     cropEditing,
     onCropEditingChange,
     viewerLayout,
+    sliceJumpFlash = 0,
   }, forwardedRef) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const viewportRef = useRef<HTMLDivElement>(null)
@@ -194,6 +197,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const [windowLevelDrag, setWindowLevelDrag] = useState<{ window: number; level: number } | null>(null)
     const [cinePlaying, setCinePlaying] = useState(false)
     const [cineFps, setCineFps] = useState<CineFps>(10)
+    const [jumpFlashVisible, setJumpFlashVisible] = useState(false)
     const [width, height, depth] = volume.dimensions
     const safeIndex = Math.max(0, Math.min(depth - 1, sliceIndex))
     const labels = orientationLabels(volume.orientation)
@@ -309,6 +313,14 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     useEffect(() => {
       if (depth <= 1) setCinePlaying(false)
     }, [depth])
+
+    useEffect(() => {
+      if (!sliceJumpFlash) return
+      setCinePlaying(false)
+      setJumpFlashVisible(true)
+      const timer = window.setTimeout(() => setJumpFlashVisible(false), 520)
+      return () => window.clearTimeout(timer)
+    }, [sliceJumpFlash])
 
     useEffect(() => {
       setMeasurementDraft(null)
@@ -573,8 +585,9 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
 
     return (
       <section
-        className="slice-viewer"
+        className={`slice-viewer${jumpFlashVisible ? ' slice-jump-flash' : ''}`}
         aria-label="2D DICOM slice viewer"
+        data-slice-jump-flash={jumpFlashVisible ? 'true' : 'false'}
         onWheel={handleWheel}
       >
         <div className="slice-viewport" ref={viewportRef}>
@@ -593,6 +606,13 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
             onContextMenu={(event) => event.preventDefault()}
           >
             <canvas ref={canvasRef} data-testid="slice-canvas" aria-label={`Slice ${safeIndex + 1} of ${depth}`} />
+            {jumpFlashVisible ? (
+              <div className="slice-jump-crosshair" data-testid="slice-jump-crosshair" aria-hidden="true">
+                <i className="jump-hline" />
+                <i className="jump-vline" />
+                <span className="jump-ring" />
+              </div>
+            ) : null}
             {canvasRect ? (
               <div
                 className={`crop-overlay${cropEditing ? ' editing' : ''}${measurementTool ? ' measuring' : ''}${windowLevelDrag ? ' window-leveling' : ''}${canPan ? ' panning-ready' : ''}`}

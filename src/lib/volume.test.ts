@@ -1,10 +1,42 @@
 import { describe, expect, it } from 'vitest'
-import { createDemoVolume, normalizePhysicalSize } from './volume'
+import {
+  createDemoVolume,
+  localZFromVolumeRay,
+  normalizePhysicalSize,
+  sliceIndexFromLocalZ,
+} from './volume'
 import { planVolumeReconstruction, reconstructVolume } from './reconstructVolume'
 
 describe('volume utilities', () => {
   it('normalizes physical dimensions without changing their aspect ratio', () => {
     expect(normalizePhysicalSize([100, 200, 50])).toEqual([0.5, 1, 0.25])
+  })
+
+  it('maps volume-local Z to a clamped stack index', () => {
+    expect(sliceIndexFromLocalZ(-0.5, 1, 11)).toBe(0)
+    expect(sliceIndexFromLocalZ(0, 1, 11)).toBe(5)
+    expect(sliceIndexFromLocalZ(0.5, 1, 11)).toBe(10)
+    expect(sliceIndexFromLocalZ(-10, 1, 11)).toBe(0)
+    expect(sliceIndexFromLocalZ(10, 1, 11)).toBe(10)
+    expect(sliceIndexFromLocalZ(0, 1, 1)).toBe(0)
+  })
+
+  it('picks stack-local Z from a ray through the volume box midpoint', () => {
+    // Side-on ray: enter −X, exit +X, through Z = 0.25
+    const z = localZFromVolumeRay(
+      { x: -2, y: 0, z: 0.25 },
+      { x: 1, y: 0, z: 0 },
+      [1, 1, 1],
+    )
+    expect(z).toBeCloseTo(0.25, 5)
+    expect(sliceIndexFromLocalZ(z!, 1, 11)).toBe(8)
+
+    // Miss
+    expect(localZFromVolumeRay(
+      { x: -2, y: 2, z: 0 },
+      { x: 1, y: 0, z: 0 },
+      [1, 1, 1],
+    )).toBeNull()
   })
 
   it('creates a non-empty, MRI-like demo volume', () => {

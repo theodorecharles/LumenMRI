@@ -87,10 +87,20 @@ export default function App() {
   const [viewerLayout, setViewerLayout] = useState<ViewerLayout>('volume')
   const [sliceIndex, setSliceIndex] = useState(0)
   const [showSliceHighlight, setShowSliceHighlight] = useState(false)
+  const [sliceJumpFlash, setSliceJumpFlash] = useState(0)
   const [cropBounds, setCropBounds] = useState<CropBounds>(FULL_CROP)
   const [cropEditing, setCropEditing] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [isStageFullscreen, setIsStageFullscreen] = useState(false)
+  const slicePickEnabled = showSliceHighlight || viewerLayout === 'split'
+
+  const handleSlicePick = useCallback((index: number) => {
+    setSliceIndex(index)
+    setSliceJumpFlash((token) => token + 1)
+    if (viewerLayout === 'split' && !showSliceHighlight) {
+      setShowSliceHighlight(true)
+    }
+  }, [showSliceHighlight, viewerLayout])
 
   const workerBusy = progress.phase === 'scanning' || progress.phase === 'loading'
   const busy = workerBusy || openingId !== null
@@ -534,9 +544,11 @@ export default function App() {
                           autoRotate={autoRotate}
                           sliceIndex={sliceIndex}
                           showSliceHighlight={showSliceHighlight}
+                          slicePickEnabled={slicePickEnabled}
                           cropBounds={cropBounds}
                           cropEditing={cropEditing}
                           onCropChange={setCropBounds}
+                          onSlicePick={handleSlicePick}
                         />
                       </Suspense>
                       <div className="volume-hud top-left">
@@ -555,6 +567,9 @@ export default function App() {
                       </div>
                       <div className="volume-hud bottom-left">
                         <MousePointer2 size={14} /><span>Drag to orbit</span><i /><span>Scroll to zoom</span>
+                        {slicePickEnabled && !cropEditing ? (
+                          <><i /><span>Alt-click sets 2D slice</span></>
+                        ) : null}
                       </div>
                       <div className="render-stats">
                         <span>
@@ -584,6 +599,7 @@ export default function App() {
                       cropEditing={cropEditing}
                       onCropEditingChange={setCropEditing}
                       viewerLayout={viewerLayout}
+                      sliceJumpFlash={sliceJumpFlash}
                     />
                   ) : null}
                 </div>

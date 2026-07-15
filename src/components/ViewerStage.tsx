@@ -9,7 +9,12 @@ import {
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { CropBounds, ReconstructedVolume, VolumeData, VolumeSettings } from '../types'
-import { normalizePhysicalSize, PALETTES } from '../lib/volume'
+import {
+  localZFromVolumeRay,
+  normalizePhysicalSize,
+  PALETTES,
+  sliceIndexFromLocalZ,
+} from '../lib/volume'
 import { volumeFragmentShader, volumeVertexShader } from '../rendering/shaders'
 
 export type CameraView = 'perspective' | 'slices' | 'back' | 'side' | 'left' | 'top' | 'bottom'
@@ -32,9 +37,12 @@ interface ViewerStageProps {
   autoRotate: boolean
   sliceIndex: number
   showSliceHighlight: boolean
+  /** When true, Alt/Option-click raycasts the volume and sets the linked 2D slice. */
+  slicePickEnabled: boolean
   cropBounds: CropBounds
   cropEditing: boolean
   onCropChange: (bounds: CropBounds) => void
+  onSlicePick: (index: number) => void
 }
 
 interface Runtime {
@@ -471,15 +479,21 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       autoRotate,
       sliceIndex,
       showSliceHighlight,
+      slicePickEnabled,
       cropBounds,
       cropEditing,
       onCropChange,
+      onSlicePick,
     },
     forwardedRef,
   ) {
     const containerRef = useRef<HTMLDivElement>(null)
     const runtimeRef = useRef<Runtime | null>(null)
     const autoRotateRef = useRef(autoRotate)
+    const slicePickEnabledRef = useRef(slicePickEnabled)
+    const cropEditingRef = useRef(cropEditing)
+    const onSlicePickRef = useRef(onSlicePick)
+    const sourceDepthRef = useRef(volume.dimensions[2])
     const cropHandleRefs = useRef<Record<string, HTMLButtonElement | null>>({})
     const cropDragRef = useRef<CropDrag | null>(null)
     const [renderError, setRenderError] = useState<string | null>(null)
@@ -487,6 +501,22 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
     useEffect(() => {
       autoRotateRef.current = autoRotate
     }, [autoRotate])
+
+    useEffect(() => {
+      slicePickEnabledRef.current = slicePickEnabled
+    }, [slicePickEnabled])
+
+    useEffect(() => {
+      cropEditingRef.current = cropEditing
+    }, [cropEditing])
+
+    useEffect(() => {
+      onSlicePickRef.current = onSlicePick
+    }, [onSlicePick])
+
+    useEffect(() => {
+      sourceDepthRef.current = volume.dimensions[2]
+    }, [volume.dimensions])
 
     useEffect(() => {
       if (containerRef.current) containerRef.current.dataset.cropHandlesReady = 'false'
@@ -835,11 +865,60 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       }
       renderer.domElement.addEventListener('webglcontextlost', onContextLost)
 
+      const pickSliceFromPointer = (event: PointerEvent) => {
+        if (!slicePickEnabledRef.current || cropEditingRef.current) return false
+        if (!event.altKey || event.button !== 0) return false
+        const root = runtime.volumeRoot
+        if (!root) return false
+        root.updateWorldMatrix(true, false)
+        const canvasBounds = renderer.domElement.getBoundingClientRect()
+        if (!canvasBounds.width || !canvasBounds.height) return false
+        const pointer = new THREE.Vector2(
+          ((event.clientX - canvasBounds.left) / canvasBounds.width) * 2 - 1,
+          -((event.clientY - canvasBounds.top) / canvasBounds.height) * 2 + 1,
+        )
+        // Same NDC → ray path as crop move; AABB chord avoids BackSide mesh hits.
+        const raycaster = new THREE.Raycaster()
+        raycaster.setFromCamera(pointer, runtime.camera)
+        const inverseRoot = root.matrixWorld.clone().invert()
+        const origin = raycaster.ray.origin.clone().applyMatrix4(inverseRoot)
+        const direction = raycaster.ray.direction.clone().transformDirection(inverseRoot).normalize()
+        const localZ = localZFromVolumeRay(origin, direction, runtime.volumeSize)
+        if (localZ === null) return false
+        const index = sliceIndexFromLocalZ(
+          localZ,
+          runtime.volumeSize[2],
+          sourceDepthRef.current,
+        )
+        onSlicePickRef.current(index)
+        container.dataset.slicePickIndex = String(index)
+        runtime.needsRender = true
+        return true
+      }
+
+      const onPointerDownPick = (event: PointerEvent) => {
+        if (!pickSliceFromPointer(event)) return
+        // Keep OrbitControls from starting a drag after a successful pick.
+        event.preventDefault()
+        event.stopPropagation()
+        runtime.controls.enabled = false
+        const reenable = () => {
+          runtime.controls.enabled = true
+          window.removeEventListener('pointerup', reenable)
+          window.removeEventListener('pointercancel', reenable)
+        }
+        window.addEventListener('pointerup', reenable)
+        window.addEventListener('pointercancel', reenable)
+      }
+      // Capture phase so OrbitControls does not consume the gesture first.
+      renderer.domElement.addEventListener('pointerdown', onPointerDownPick, true)
+
       return () => {
         cancelAnimationFrame(runtime.frame)
         resizeObserver.disconnect()
         runtime.controls.dispose()
         renderer.domElement.removeEventListener('webglcontextlost', onContextLost)
+        renderer.domElement.removeEventListener('pointerdown', onPointerDownPick, true)
         scene.children.forEach(disposeObject)
         renderer.dispose()
         renderer.domElement.remove()
@@ -1177,6 +1256,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         className="viewer-canvas"
         ref={containerRef}
         data-crop-cross-sections={cropEditing ? '6' : '0'}
+        data-slice-pick={slicePickEnabled && !cropEditing ? 'alt-click' : 'off'}
       >
         {renderError ? (
           <div className="viewer-error" role="alert">
