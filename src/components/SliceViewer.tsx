@@ -4,6 +4,8 @@ import {
   ChevronUp,
   Crop,
   MousePointer2,
+  Pause,
+  Play,
   RotateCcw,
   Ruler,
   SquareDashed,
@@ -15,6 +17,9 @@ export interface SliceViewerHandle {
   capture: () => void
 }
 
+const CINE_FPS_OPTIONS = [5, 10, 15] as const
+type CineFps = (typeof CINE_FPS_OPTIONS)[number]
+
 interface SliceViewerProps {
   volume: VolumeData
   sliceIndex: number
@@ -25,6 +30,8 @@ interface SliceViewerProps {
   onCropChange: (bounds: CropBounds) => void
   cropEditing: boolean
   onCropEditingChange: (editing: boolean) => void
+  /** Used to pause cine when the viewer layout changes. */
+  viewerLayout?: string
 }
 
 interface CanvasRect {
@@ -91,19 +98,24 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     onCropChange,
     cropEditing,
     onCropEditingChange,
+    viewerLayout,
   }, forwardedRef) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const viewportRef = useRef<HTMLDivElement>(null)
     const interactionRef = useRef<PointerInteraction | null>(null)
     const measurementIdRef = useRef(0)
+    const sliceIndexRef = useRef(sliceIndex)
     const [canvasRect, setCanvasRect] = useState<CanvasRect | null>(null)
     const [measurementTool, setMeasurementTool] = useState<MeasurementTool | null>(null)
     const [measurements, setMeasurements] = useState<Measurement[]>([])
     const [measurementDraft, setMeasurementDraft] = useState<Measurement | null>(null)
     const [windowLevelDrag, setWindowLevelDrag] = useState<{ window: number; level: number } | null>(null)
+    const [cinePlaying, setCinePlaying] = useState(false)
+    const [cineFps, setCineFps] = useState<CineFps>(10)
     const [width, height, depth] = volume.dimensions
     const safeIndex = Math.max(0, Math.min(depth - 1, sliceIndex))
     const labels = orientationLabels(volume.orientation)
+    sliceIndexRef.current = safeIndex
 
     useImperativeHandle(
       forwardedRef,
@@ -172,15 +184,45 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       setMeasurementDraft(null)
       setMeasurementTool(null)
       interactionRef.current = null
+      setCinePlaying(false)
     }, [volume.seriesId])
+
+    useEffect(() => {
+      setCinePlaying(false)
+    }, [viewerLayout])
+
+    useEffect(() => {
+      if (depth <= 1) setCinePlaying(false)
+    }, [depth])
 
     useEffect(() => {
       setMeasurementDraft(null)
       if (interactionRef.current?.type === 'measurement') interactionRef.current = null
     }, [safeIndex])
 
+    useEffect(() => {
+      if (!cinePlaying || depth <= 1) return
+      const intervalMs = 1000 / cineFps
+      const timer = window.setInterval(() => {
+        const current = sliceIndexRef.current
+        onSliceChange(current >= depth - 1 ? 0 : current + 1)
+      }, intervalMs)
+      return () => window.clearInterval(timer)
+    }, [cinePlaying, cineFps, depth, onSliceChange])
+
+    /** User-driven slice change — pauses cine playback. */
+    const setSliceFromUser = (index: number) => {
+      setCinePlaying(false)
+      onSliceChange(Math.max(0, Math.min(depth - 1, index)))
+    }
+
     const stepSlice = (amount: number) => {
-      onSliceChange(Math.max(0, Math.min(depth - 1, safeIndex + amount)))
+      setSliceFromUser(safeIndex + amount)
+    }
+
+    const toggleCine = () => {
+      if (depth <= 1) return
+      setCinePlaying((playing) => !playing)
     }
 
     const cropPoint = (event: React.PointerEvent) => {
@@ -535,8 +577,24 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
           <button type="button" aria-label="Previous slice" onClick={() => stepSlice(-1)}>
             <ChevronDown size={15} />
           </button>
+          <button
+            type="button"
+            className={cinePlaying ? 'active' : ''}
+            aria-label={cinePlaying ? 'Pause cine' : 'Play cine'}
+            aria-pressed={cinePlaying}
+            title={cinePlaying ? 'Pause stack play' : 'Play through stack'}
+            disabled={depth <= 1}
+            onClick={toggleCine}
+          >
+            {cinePlaying ? <Pause size={15} /> : <Play size={15} />}
+          </button>
           <div className="slice-slider">
-            <span><MousePointer2 size={12} /> Scroll or drag the slider through slices</span>
+            <span>
+              <MousePointer2 size={12} />
+              {cinePlaying
+                ? `Cine · ${cineFps} fps · loops at ends`
+                : 'Scroll or drag the slider through slices'}
+            </span>
             <input
               type="range"
               min={0}
@@ -545,12 +603,25 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
               value={safeIndex}
               aria-label="Displayed slice"
               style={{ '--slice-progress': `${depth > 1 ? (safeIndex / (depth - 1)) * 100 : 0}%` } as React.CSSProperties}
-              onChange={(event) => onSliceChange(Number(event.target.value))}
+              onChange={(event) => setSliceFromUser(Number(event.target.value))}
             />
           </div>
           <button type="button" aria-label="Next slice" onClick={() => stepSlice(1)}>
             <ChevronUp size={15} />
           </button>
+          <label className="cine-fps">
+            <span className="visually-hidden">Cine frames per second</span>
+            <select
+              aria-label="Cine frames per second"
+              value={cineFps}
+              disabled={depth <= 1}
+              onChange={(event) => setCineFps(Number(event.target.value) as CineFps)}
+            >
+              {CINE_FPS_OPTIONS.map((fps) => (
+                <option key={fps} value={fps}>{fps} fps</option>
+              ))}
+            </select>
+          </label>
           <div className="slice-crop-actions">
             <button
               className={cropEditing ? 'active' : ''}

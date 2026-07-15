@@ -2073,7 +2073,7 @@ button:disabled {
 .slice-controls {
   z-index: 4;
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) 30px auto 54px;
+  grid-template-columns: 30px 30px minmax(0, 1fr) 30px auto auto 54px;
   align-items: center;
   gap: 9px;
   padding: 9px 13px;
@@ -2094,9 +2094,51 @@ button:disabled {
   background: #0b131b;
 }
 
-.slice-controls > button:hover {
+.slice-controls > button:hover:not(:disabled) {
   color: var(--cyan);
   border-color: var(--line-strong);
+}
+
+.slice-controls > button.active {
+  color: #d4faff;
+  border-color: var(--line-strong);
+  background: var(--cyan-soft);
+}
+
+.slice-controls > button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cine-fps {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.cine-fps select {
+  height: 30px;
+  padding: 0 6px;
+  color: #8aa0a8;
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0b131b;
+  appearance: auto;
+}
+
+.cine-fps select:hover:not(:disabled),
+.cine-fps select:focus-visible {
+  color: var(--cyan);
+  border-color: var(--line-strong);
+  outline: none;
+}
+
+.cine-fps select:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .slice-controls > div {
@@ -2482,13 +2524,18 @@ button:disabled {
   }
 
   .slice-controls {
-    grid-template-columns: 28px minmax(0, 1fr) 28px auto 42px;
+    grid-template-columns: 28px 28px minmax(0, 1fr) 28px auto auto 42px;
     gap: 6px;
     padding-inline: 8px;
   }
 
   .slice-controls > div span {
     display: none;
+  }
+
+  .cine-fps select {
+    padding: 0 4px;
+    font-size: 8px;
   }
 
   .slice-crop-actions button {

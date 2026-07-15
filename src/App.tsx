@@ -550,6 +550,7 @@ export default function App() {
                       onCropChange={setCropBounds}
                       cropEditing={cropEditing}
                       onCropEditingChange={setCropEditing}
+                      viewerLayout={viewerLayout}
                     />
                   ) : null}
                 </div>
