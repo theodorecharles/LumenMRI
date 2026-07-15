@@ -545,6 +545,7 @@ export default function App() {
                       sliceIndex={sliceIndex}
                       onSliceChange={setSliceIndex}
                       volumeSettings={volumeSettings}
+                      onVolumeSettingsChange={(patch) => setVolumeSettings((current) => ({ ...current, ...patch }))}
                       cropBounds={cropBounds}
                       onCropChange={setCropBounds}
                       cropEditing={cropEditing}

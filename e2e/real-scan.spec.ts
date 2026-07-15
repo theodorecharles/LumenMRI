@@ -220,6 +220,26 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
   await page.screenshot({ path: 'artifacts/linked-split-view.png', fullPage: true })
   await page.getByRole('button', { name: 'Clear measurements on slice' }).click()
   await expect(page.locator('.measurement-label')).toHaveCount(0)
+  // Deselect active measure tool so plain left-drag is free; shift-drag still owns W/L.
+  await page.getByRole('button', { name: 'ROI area measurement' }).click()
+  await expect(page.getByRole('button', { name: 'ROI area measurement' })).toHaveAttribute('aria-pressed', 'false')
+
+  const windowSlider = page.getByRole('slider', { name: 'Window' })
+  const levelSlider = page.getByRole('slider', { name: 'Level' })
+  const windowBefore = Number(await windowSlider.inputValue())
+  const levelBefore = Number(await levelSlider.inputValue())
+  if (cropBox) {
+    await page.mouse.move(cropBox.x + cropBox.width * 0.5, cropBox.y + cropBox.height * 0.5)
+    await page.keyboard.down('Shift')
+    await page.mouse.down()
+    await page.mouse.move(cropBox.x + cropBox.width * 0.72, cropBox.y + cropBox.height * 0.28, { steps: 10 })
+    await expect(page.getByTestId('window-level-readout')).toBeVisible()
+    await page.mouse.up()
+    await page.keyboard.up('Shift')
+  }
+  await expect(page.getByTestId('window-level-readout')).toHaveCount(0)
+  await expect.poll(async () => Number(await windowSlider.inputValue())).not.toBeCloseTo(windowBefore, 2)
+  await expect.poll(async () => Number(await levelSlider.inputValue())).not.toBeCloseTo(levelBefore, 2)
 
   const volumeCanvas = page.locator('.viewer-canvas canvas')
   const volumeBox = await volumeCanvas.boundingBox()

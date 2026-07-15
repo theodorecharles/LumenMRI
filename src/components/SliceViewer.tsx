@@ -20,6 +20,7 @@ interface SliceViewerProps {
   sliceIndex: number
   onSliceChange: (index: number) => void
   volumeSettings: VolumeSettings
+  onVolumeSettingsChange: (patch: Partial<VolumeSettings>) => void
   cropBounds: CropBounds
   onCropChange: (bounds: CropBounds) => void
   cropEditing: boolean
@@ -53,11 +54,23 @@ interface Measurement {
   end: MeasurementPoint
 }
 
-type PointerInteraction = CropInteraction | {
+type WindowLevelInteraction = {
+  type: 'window-level'
+  originX: number
+  originY: number
+  startWindow: number
+  startLevel: number
+}
+
+type PointerInteraction = CropInteraction | WindowLevelInteraction | {
   type: 'measurement'
   tool: MeasurementTool
   slice: number
   start: MeasurementPoint
+}
+
+function clamp01(value: number, min = 0, max = 1) {
+  return Math.max(min, Math.min(max, value))
 }
 
 function orientationLabels(orientation: string) {
@@ -73,6 +86,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     sliceIndex,
     onSliceChange,
     volumeSettings,
+    onVolumeSettingsChange,
     cropBounds,
     onCropChange,
     cropEditing,
@@ -86,6 +100,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const [measurementTool, setMeasurementTool] = useState<MeasurementTool | null>(null)
     const [measurements, setMeasurements] = useState<Measurement[]>([])
     const [measurementDraft, setMeasurementDraft] = useState<Measurement | null>(null)
+    const [windowLevelDrag, setWindowLevelDrag] = useState<{ window: number; level: number } | null>(null)
     const [width, height, depth] = volume.dimensions
     const safeIndex = Math.max(0, Math.min(depth - 1, sliceIndex))
     const labels = orientationLabels(volume.orientation)
@@ -177,7 +192,27 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       }
     }
 
+    const beginWindowLevel = (event: React.PointerEvent<HTMLDivElement>) => {
+      interactionRef.current = {
+        type: 'window-level',
+        originX: event.clientX,
+        originY: event.clientY,
+        startWindow: volumeSettings.window,
+        startLevel: volumeSettings.level,
+      }
+      setWindowLevelDrag({ window: volumeSettings.window, level: volumeSettings.level })
+      event.currentTarget.setPointerCapture(event.pointerId)
+      event.preventDefault()
+    }
+
     const beginInteraction = (event: React.PointerEvent<HTMLDivElement>) => {
+      const wantsWindowLevel = event.button === 2 || (event.button === 0 && event.shiftKey)
+      if (wantsWindowLevel) {
+        beginWindowLevel(event)
+        return
+      }
+      if (event.button !== 0) return
+
       const point = cropPoint(event)
       if (measurementTool) {
         const draft: Measurement = {
@@ -219,6 +254,21 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const updateInteraction = (event: React.PointerEvent<HTMLDivElement>) => {
       const interaction = interactionRef.current
       if (!interaction) return
+      if (interaction.type === 'window-level') {
+        const scaleX = Math.max(120, canvasRect?.width ?? 240)
+        const scaleY = Math.max(120, canvasRect?.height ?? 240)
+        const nextWindow = clamp01(
+          interaction.startWindow + ((event.clientX - interaction.originX) / scaleX) * 1.15,
+          0.1,
+          1,
+        )
+        const nextLevel = clamp01(
+          interaction.startLevel - ((event.clientY - interaction.originY) / scaleY) * 1.15,
+        )
+        setWindowLevelDrag({ window: nextWindow, level: nextLevel })
+        onVolumeSettingsChange({ window: nextWindow, level: nextLevel })
+        return
+      }
       const point = cropPoint(event)
       if (interaction.type === 'measurement') {
         setMeasurementDraft({
@@ -258,6 +308,14 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
 
     const finishInteraction = (event: React.PointerEvent<HTMLDivElement>) => {
       const interaction = interactionRef.current
+      if (interaction?.type === 'window-level') {
+        setWindowLevelDrag(null)
+        interactionRef.current = null
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId)
+        }
+        return
+      }
       if (interaction?.type === 'measurement' && measurementDraft) {
         const pixelWidth = Math.abs(measurementDraft.end.x - measurementDraft.start.x) * width
         const pixelHeight = Math.abs(measurementDraft.end.y - measurementDraft.start.y) * height
@@ -282,6 +340,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const cancelInteraction = () => {
       interactionRef.current = null
       setMeasurementDraft(null)
+      setWindowLevelDrag(null)
     }
 
     const selectMeasurementTool = (tool: MeasurementTool) => {
@@ -340,13 +399,14 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
           <canvas ref={canvasRef} data-testid="slice-canvas" aria-label={`Slice ${safeIndex + 1} of ${depth}`} />
           {canvasRect ? (
             <div
-              className={`crop-overlay${cropEditing ? ' editing' : ''}${measurementTool ? ' measuring' : ''}`}
+              className={`crop-overlay interactive${cropEditing ? ' editing' : ''}${measurementTool ? ' measuring' : ''}${windowLevelDrag ? ' window-leveling' : ''}`}
               data-testid="crop-overlay"
               style={canvasRect}
               onPointerDown={beginInteraction}
               onPointerMove={updateInteraction}
               onPointerUp={finishInteraction}
               onPointerCancel={cancelInteraction}
+              onContextMenu={(event) => event.preventDefault()}
             >
               {cropped || cropEditing ? (
                 <div
@@ -415,6 +475,12 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                     )
                   })}
                 </>
+              ) : null}
+              {windowLevelDrag ? (
+                <div className="window-level-readout" data-testid="window-level-readout" role="status" aria-live="polite">
+                  <span>W {Math.round(windowLevelDrag.window * 255)}</span>
+                  <span>L {Math.round(windowLevelDrag.level * 255)}</span>
+                </div>
               ) : null}
             </div>
           ) : null}
