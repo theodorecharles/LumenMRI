@@ -136,9 +136,12 @@ export default function App() {
   }, [])
 
   // Terminal reconstruction failure: stay on acquired data, never leave Enhanced "Processing".
+  // Re-enable Enhanced when a later series reconstructs successfully so a prior error does not stick.
   useEffect(() => {
     if (reconstruction.status === 'error') {
       setReconstructionEnabled(false)
+    } else if (reconstruction.status === 'ready') {
+      setReconstructionEnabled(true)
     }
   }, [reconstruction.status])
 
