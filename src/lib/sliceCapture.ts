@@ -31,6 +31,18 @@ export interface AnnotatedSliceCaptureInput {
   labels: CaptureOrientationLabels
 }
 
+export type VolumeCaptureMode = 'acquired' | 'enhanced'
+
+export interface AnnotatedVolumeCaptureInput {
+  source: HTMLCanvasElement
+  seriesName: string
+  orientation: string
+  mode: VolumeCaptureMode
+  dimensions: [number, number, number]
+  paletteName: string
+  cropActive: boolean
+}
+
 const DISTANCE_STROKE = '#68efff'
 const DISTANCE_ENDPOINT = '#b9f9ff'
 const ROI_STROKE = '#ffb263'
@@ -114,9 +126,9 @@ function drawOrientationMarker(
   ctx.restore()
 }
 
-function drawMetadataStrip(
+function drawMetadataLines(
   ctx: CanvasRenderingContext2D,
-  input: AnnotatedSliceCaptureInput,
+  stripLines: Array<{ text: string; color: string }>,
   scale: number,
 ) {
   const fontSize = Math.max(9, Math.round(10 * scale))
@@ -127,19 +139,6 @@ function drawMetadataStrip(
   ctx.save()
   ctx.font = `${fontSize}px "DM Mono", ui-monospace, monospace`
   ctx.textBaseline = 'top'
-
-  // Thin corner strip: series name, slice index, W/L.
-  const stripLines: Array<{ text: string; color: string }> = [
-    { text: input.seriesName, color: META_DIM },
-    {
-      text: `SL ${String(input.sliceIndex + 1).padStart(3, '0')} / ${String(input.sliceCount).padStart(3, '0')}`,
-      color: META_ACCENT,
-    },
-    {
-      text: `W ${Math.round(input.window * 255)} · L ${Math.round(input.level * 255)}`,
-      color: META_MUTED,
-    },
-  ]
 
   const maxWidth = Math.max(...stripLines.map((line) => ctx.measureText(line.text).width))
   const stripH = stripLines.length * lineGap + pad * 0.6
@@ -154,6 +153,48 @@ function drawMetadataStrip(
     ctx.fillText(line.text, pad, top + index * lineGap)
   })
   ctx.restore()
+}
+
+function drawMetadataStrip(
+  ctx: CanvasRenderingContext2D,
+  input: AnnotatedSliceCaptureInput,
+  scale: number,
+) {
+  // Thin corner strip: series name, slice index, W/L.
+  drawMetadataLines(
+    ctx,
+    [
+      { text: input.seriesName, color: META_DIM },
+      {
+        text: `SL ${String(input.sliceIndex + 1).padStart(3, '0')} / ${String(input.sliceCount).padStart(3, '0')}`,
+        color: META_ACCENT,
+      },
+      {
+        text: `W ${Math.round(input.window * 255)} · L ${Math.round(input.level * 255)}`,
+        color: META_MUTED,
+      },
+    ],
+    scale,
+  )
+}
+
+function drawVolumeMetadataStrip(
+  ctx: CanvasRenderingContext2D,
+  input: AnnotatedVolumeCaptureInput,
+  scale: number,
+) {
+  const [width, height, depth] = input.dimensions
+  const modeLabel = input.mode === 'enhanced' ? 'Enhanced' : 'Acquired'
+  const stripLines: Array<{ text: string; color: string }> = [
+    { text: input.seriesName, color: META_DIM },
+    { text: `${input.orientation} · ${modeLabel}`, color: META_ACCENT },
+    { text: `${width} × ${height} × ${depth}`, color: META_MUTED },
+    { text: `Palette ${input.paletteName}`, color: META_MUTED },
+  ]
+  if (input.cropActive) {
+    stripLines.push({ text: 'Crop active', color: META_MUTED })
+  }
+  drawMetadataLines(ctx, stripLines, scale)
 }
 
 /**
@@ -260,6 +301,30 @@ export function compositeAnnotatedSlicePng(input: AnnotatedSliceCaptureInput): s
   drawOrientationMarker(ctx, input.labels.right, width - edgePad - markerSize / 2, height / 2, markerSize)
 
   drawMetadataStrip(ctx, input, scale)
+
+  return canvas.toDataURL('image/png')
+}
+
+/**
+ * Composite a WebGL volume frame with a thin metadata strip (series, mode,
+ * dimensions, palette, crop) into a PNG data URL. No 3D measurements.
+ */
+export function compositeAnnotatedVolumePng(input: AnnotatedVolumeCaptureInput): string {
+  const { source } = input
+  const width = source.width
+  const height = source.height
+  if (!width || !height) return source.toDataURL('image/png')
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return source.toDataURL('image/png')
+
+  ctx.drawImage(source, 0, 0)
+
+  const scale = Math.max(0.75, Math.min(width, height) / 360)
+  drawVolumeMetadataStrip(ctx, input, scale)
 
   return canvas.toDataURL('image/png')
 }
