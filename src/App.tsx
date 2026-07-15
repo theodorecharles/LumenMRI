@@ -131,6 +131,13 @@ export default function App() {
     inputRef.current?.setAttribute('directory', '')
   }, [])
 
+  // Terminal reconstruction failure: stay on acquired data, never leave Enhanced "Processing".
+  useEffect(() => {
+    if (reconstruction.status === 'error') {
+      setReconstructionEnabled(false)
+    }
+  }, [reconstruction.status])
+
   useEffect(() => {
     if (!series.length || activeSeriesId) return
     const recommended = series.find((item) => item.supported)
@@ -302,10 +309,23 @@ export default function App() {
       if (event.key === '1') setViewerLayout('volume')
       if (event.key === '2') setViewerLayout('slice')
       if (event.key === '3') setViewerLayout('split')
+      if (volume) {
+        const depth = volume.dimensions[2]
+        const step =
+          event.key === 'ArrowUp' || event.key === ','
+            ? -1
+            : event.key === 'ArrowDown' || event.key === '.'
+              ? 1
+              : 0
+        if (step !== 0) {
+          event.preventDefault()
+          setSliceIndex((current) => Math.max(0, Math.min(depth - 1, current + step)))
+        }
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [captureActiveView, goHome, isStageFullscreen, toggleStageFullscreen])
+  }, [captureActiveView, goHome, isStageFullscreen, toggleStageFullscreen, volume])
 
   const onDrop = async (event: React.DragEvent) => {
     event.preventDefault()
@@ -358,7 +378,11 @@ export default function App() {
         className="visually-hidden"
         type="file"
         multiple
-        onChange={(event) => handleFiles([...(event.target.files || [])])}
+        onChange={(event) => {
+          handleFiles([...(event.target.files || [])])
+          // Allow re-selecting the same folder on the file-input fallback path.
+          event.target.value = ''
+        }}
       />
 
       {screen === 'library' ? (
@@ -545,10 +569,12 @@ export default function App() {
                       sliceIndex={sliceIndex}
                       onSliceChange={setSliceIndex}
                       volumeSettings={volumeSettings}
+                      onVolumeSettingsChange={(patch) => setVolumeSettings((current) => ({ ...current, ...patch }))}
                       cropBounds={cropBounds}
                       onCropChange={setCropBounds}
                       cropEditing={cropEditing}
                       onCropEditingChange={setCropEditing}
+                      viewerLayout={viewerLayout}
                     />
                   ) : null}
                 </div>
@@ -595,6 +621,8 @@ export default function App() {
             onProjectionChange={setCameraProjection}
             reconstructionEnabled={reconstructionEnabled}
             reconstructionReady={reconstruction.volume?.seriesId === volume?.seriesId}
+            reconstructionStatus={reconstruction.status}
+            reconstructionMessage={reconstruction.message}
             onReconstructionEnabledChange={setReconstructionEnabled}
             cropBounds={cropBounds}
             onCropChange={setCropBounds}

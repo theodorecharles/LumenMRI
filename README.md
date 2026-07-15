@@ -53,6 +53,8 @@ Unsupported transfer syntaxes are marked unavailable instead of being decoded in
 - `1`: 3D volume
 - `2`: 2D slice
 - `3`: linked split view
+- `↑` / `,`: previous slice
+- `↓` / `.`: next slice
 - `R`: reset 3D view
 - `F`: fullscreen workspace
 - `S`: save the active rendering

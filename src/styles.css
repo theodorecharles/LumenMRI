@@ -1835,7 +1835,30 @@ button:disabled {
   background-size: 42px 42px;
 }
 
-.slice-viewport canvas {
+.slice-stage {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  transform-origin: center center;
+  will-change: transform;
+  touch-action: none;
+}
+
+.slice-stage.pannable {
+  cursor: grab;
+}
+
+.slice-stage.panning {
+  cursor: grabbing;
+}
+
+.slice-viewport canvas,
+.slice-stage canvas {
   display: block;
   width: auto;
   max-width: 100%;
@@ -1855,14 +1878,66 @@ button:disabled {
   touch-action: none;
 }
 
-.crop-overlay.editing {
-  cursor: crosshair;
+.crop-overlay.interactive {
   pointer-events: auto;
+  cursor: default;
 }
 
+.crop-overlay.editing,
 .crop-overlay.measuring {
   cursor: crosshair;
+}
+
+.crop-overlay.window-leveling {
+  cursor: ns-resize;
+}
+
+.window-level-readout {
+  position: absolute;
+  z-index: 6;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  gap: 2px;
+  min-width: 72px;
+  padding: 8px 10px;
+  transform: translate(-50%, -50%);
+  color: #d9fbff;
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-align: center;
+  background: rgba(2, 8, 12, 0.82);
+  border: 1px solid rgba(104, 239, 255, 0.42);
+  border-radius: 6px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
+.window-level-readout span {
+  display: block;
+}
+
+.crop-overlay.panning-ready {
   pointer-events: auto;
+  cursor: grab;
+}
+
+.slice-view-badge {
+  position: absolute;
+  z-index: 6;
+  top: 63px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 7px;
+  color: #8aeaf5;
+  font-family: 'DM Mono', monospace;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  border: 1px solid rgba(116, 174, 188, 0.22);
+  border-radius: 4px;
+  background: rgba(5, 13, 19, 0.88);
+  pointer-events: none;
 }
 
 .crop-selection {
@@ -2043,7 +2118,7 @@ button:disabled {
 .slice-controls {
   z-index: 4;
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) 30px auto 54px;
+  grid-template-columns: 30px 30px minmax(0, 1fr) 30px auto auto 54px;
   align-items: center;
   gap: 9px;
   padding: 9px 13px;
@@ -2064,9 +2139,51 @@ button:disabled {
   background: #0b131b;
 }
 
-.slice-controls > button:hover {
+.slice-controls > button:hover:not(:disabled) {
   color: var(--cyan);
   border-color: var(--line-strong);
+}
+
+.slice-controls > button.active {
+  color: #d4faff;
+  border-color: var(--line-strong);
+  background: var(--cyan-soft);
+}
+
+.slice-controls > button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cine-fps {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.cine-fps select {
+  height: 30px;
+  padding: 0 6px;
+  color: #8aa0a8;
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0b131b;
+  appearance: auto;
+}
+
+.cine-fps select:hover:not(:disabled),
+.cine-fps select:focus-visible {
+  color: var(--cyan);
+  border-color: var(--line-strong);
+  outline: none;
+}
+
+.cine-fps select:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .slice-controls > div {
@@ -2214,6 +2331,21 @@ button:disabled {
   color: #3f5158;
   cursor: wait;
   background: #091018;
+}
+
+.mode-grid button:disabled[data-unavailable='true'] {
+  cursor: not-allowed;
+}
+
+.section-label small[data-status='error'] {
+  color: #9a6b5c;
+}
+
+.reconstruction-status-message {
+  margin: 0;
+  color: #9a6b5c;
+  font-size: 9px;
+  line-height: 1.35;
 }
 
 .rotate-label { margin-top: 3px; }
@@ -2452,13 +2584,18 @@ button:disabled {
   }
 
   .slice-controls {
-    grid-template-columns: 28px minmax(0, 1fr) 28px auto 42px;
+    grid-template-columns: 28px 28px minmax(0, 1fr) 28px auto auto 42px;
     gap: 6px;
     padding-inline: 8px;
   }
 
   .slice-controls > div span {
     display: none;
+  }
+
+  .cine-fps select {
+    padding: 0 4px;
+    font-size: 8px;
   }
 
   .slice-crop-actions button {

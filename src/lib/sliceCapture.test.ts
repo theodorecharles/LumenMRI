@@ -1,0 +1,131 @@
+import { describe, expect, it, vi } from 'vitest'
+import { compositeAnnotatedSlicePng } from './sliceCapture'
+
+type DrawCall = { method: string; args: unknown[] }
+
+function mockContext() {
+  const calls: DrawCall[] = []
+  const ctx = {
+    drawImage: (...args: unknown[]) => calls.push({ method: 'drawImage', args }),
+    beginPath: (...args: unknown[]) => calls.push({ method: 'beginPath', args }),
+    moveTo: (...args: unknown[]) => calls.push({ method: 'moveTo', args }),
+    lineTo: (...args: unknown[]) => calls.push({ method: 'lineTo', args }),
+    stroke: (...args: unknown[]) => calls.push({ method: 'stroke', args }),
+    fill: (...args: unknown[]) => calls.push({ method: 'fill', args }),
+    arc: (...args: unknown[]) => calls.push({ method: 'arc', args }),
+    arcTo: (...args: unknown[]) => calls.push({ method: 'arcTo', args }),
+    closePath: (...args: unknown[]) => calls.push({ method: 'closePath', args }),
+    strokeRect: (...args: unknown[]) => calls.push({ method: 'strokeRect', args }),
+    fillRect: (...args: unknown[]) => calls.push({ method: 'fillRect', args }),
+    fillText: (...args: unknown[]) => calls.push({ method: 'fillText', args }),
+    save: (...args: unknown[]) => calls.push({ method: 'save', args }),
+    restore: (...args: unknown[]) => calls.push({ method: 'restore', args }),
+    setLineDash: (...args: unknown[]) => calls.push({ method: 'setLineDash', args }),
+    measureText: (text: string) => ({ width: String(text).length * 6 }),
+    createImageData: () => ({ data: new Uint8ClampedArray(4) }),
+    putImageData: () => undefined,
+    getImageData: () => ({ data: new Uint8ClampedArray(4), width: 1, height: 1 }),
+    canvas: undefined as unknown,
+    fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 1,
+    font: '',
+    textAlign: 'start',
+    textBaseline: 'alphabetic',
+    shadowColor: '',
+    shadowBlur: 0,
+  }
+  return { ctx: ctx as unknown as CanvasRenderingContext2D, calls }
+}
+
+function mockSource(width = 80, height = 80) {
+  const source = {
+    width,
+    height,
+    toDataURL: vi.fn(() => 'data:image/png;base64,SOURCE'),
+  } as unknown as HTMLCanvasElement
+  return source
+}
+
+describe('compositeAnnotatedSlicePng', () => {
+  it('composites intensity, measurements, orientation markers, and metadata', () => {
+    const { ctx, calls } = mockContext()
+    const createElement = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag !== 'canvas') return document.createElementNS('http://www.w3.org/1999/xhtml', tag)
+      const canvas = {
+        width: 0,
+        height: 0,
+        getContext: () => ctx,
+        toDataURL: () => 'data:image/png;base64,ANNOTATED',
+      }
+      return canvas as unknown as HTMLCanvasElement
+    })
+
+    const source = mockSource()
+    const result = compositeAnnotatedSlicePng({
+      source,
+      seriesName: 'Ax FLAIR',
+      sliceIndex: 4,
+      sliceCount: 32,
+      window: 1,
+      level: 0.5,
+      labels: { top: 'A', right: 'L', bottom: 'P', left: 'R' },
+      measurements: [
+        {
+          id: 1,
+          tool: 'distance',
+          start: { x: 0.2, y: 0.2 },
+          end: { x: 0.8, y: 0.8 },
+          label: '12 mm',
+        },
+        {
+          id: 2,
+          tool: 'roi',
+          start: { x: 0.55, y: 0.15 },
+          end: { x: 0.85, y: 0.4 },
+          label: '40 mm² · μ 48',
+        },
+      ],
+    })
+
+    expect(result).toBe('data:image/png;base64,ANNOTATED')
+    expect(calls.some((call) => call.method === 'drawImage' && call.args[0] === source)).toBe(true)
+    expect(calls.some((call) => call.method === 'lineTo')).toBe(true)
+    expect(calls.some((call) => call.method === 'strokeRect')).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === '12 mm')).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === '40 mm² · μ 48')).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'A')).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'Ax FLAIR')).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && String(call.args[0]).includes('SL 005'))).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && String(call.args[0]).includes('W 255'))).toBe(true)
+
+    createElement.mockRestore()
+  })
+
+  it('falls back to the source data URL when the composite context is missing', () => {
+    const createElement = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag !== 'canvas') return document.createElementNS('http://www.w3.org/1999/xhtml', tag)
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => null,
+        toDataURL: () => 'data:image/png;base64,COMPOSITE',
+      } as unknown as HTMLCanvasElement
+    })
+
+    const source = mockSource(16, 16)
+    const result = compositeAnnotatedSlicePng({
+      source,
+      seriesName: 'Series',
+      sliceIndex: 0,
+      sliceCount: 10,
+      window: 0.8,
+      level: 0.4,
+      labels: { top: 'S', right: 'P', bottom: 'I', left: 'A' },
+      measurements: [],
+    })
+
+    expect(result).toBe('data:image/png;base64,SOURCE')
+    createElement.mockRestore()
+  })
+})
