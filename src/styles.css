@@ -1855,14 +1855,44 @@ button:disabled {
   touch-action: none;
 }
 
-.crop-overlay.editing {
-  cursor: crosshair;
+.crop-overlay.interactive {
   pointer-events: auto;
+  cursor: default;
 }
 
+.crop-overlay.editing,
 .crop-overlay.measuring {
   cursor: crosshair;
-  pointer-events: auto;
+}
+
+.crop-overlay.window-leveling {
+  cursor: ns-resize;
+}
+
+.window-level-readout {
+  position: absolute;
+  z-index: 6;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  gap: 2px;
+  min-width: 72px;
+  padding: 8px 10px;
+  transform: translate(-50%, -50%);
+  color: #d9fbff;
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-align: center;
+  background: rgba(2, 8, 12, 0.82);
+  border: 1px solid rgba(104, 239, 255, 0.42);
+  border-radius: 6px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
+.window-level-readout span {
+  display: block;
 }
 
 .crop-selection {
