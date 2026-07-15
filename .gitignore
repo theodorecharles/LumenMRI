@@ -6,3 +6,4 @@ test-results/
 *.log
 *.tsbuildinfo
 .DS_Store
+.npm-cache/

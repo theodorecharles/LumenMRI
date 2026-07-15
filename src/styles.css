@@ -1835,7 +1835,30 @@ button:disabled {
   background-size: 42px 42px;
 }
 
-.slice-viewport canvas {
+.slice-stage {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  transform-origin: center center;
+  will-change: transform;
+  touch-action: none;
+}
+
+.slice-stage.pannable {
+  cursor: grab;
+}
+
+.slice-stage.panning {
+  cursor: grabbing;
+}
+
+.slice-viewport canvas,
+.slice-stage canvas {
   display: block;
   width: auto;
   max-width: 100%;
@@ -1893,6 +1916,28 @@ button:disabled {
 
 .window-level-readout span {
   display: block;
+}
+
+.crop-overlay.panning-ready {
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.slice-view-badge {
+  position: absolute;
+  z-index: 6;
+  top: 63px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 7px;
+  color: #8aeaf5;
+  font-family: 'DM Mono', monospace;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  border: 1px solid rgba(116, 174, 188, 0.22);
+  border-radius: 4px;
+  background: rgba(5, 13, 19, 0.88);
+  pointer-events: none;
 }
 
 .crop-selection {
