@@ -56,6 +56,8 @@ export interface VolumeSettings {
   level: number
   detail: number
   shading: number
+  lightAzimuth: number
+  lightElevation: number
   sharpness: number
   palette: PaletteName
   customPalette: [string, string, string]

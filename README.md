@@ -24,11 +24,13 @@ The homepage opens to the included scan library. Choose **Open scan** to inspect
 - Continuous Three.js ray-marched volumes with physical voxel spacing and dynamic camera fitting
 - Shape-aware, bidirectionally registered synthetic slices generated in a background worker for seamless through-plane reconstruction with preserved acquired images and sharpened anatomical boundaries
 - Diagnostic-style 2D slice canvas with orientation markers, layer position, window/level, slider, buttons, and scroll navigation
+- Physical distance rulers in millimeters plus rectangular ROI measurements with area and mean signal, stored independently on each slice
 - Linked 2D/3D split view with an optional highlighted slice plane
 - Instant Enhanced/Acquired 3D comparison, true orthographic isometric projection, and a clickable A/P/L/R/S/I anatomical view cube
-- Shared six-face crop volume with projected, draggable 3D handles, two-sided depth cropping, a synchronized 2D ROI, and automatic recentering
+- Shared six-face crop volume with live cross-section textures, projected face handles, whole-box translation, two-sided depth cropping, a synchronized 2D ROI, and automatic recentering
 - 90° dataset rotations and axial, side, top, and perspective camera presets
-- Transfer-function presets, threshold, opacity, window, level, ray detail, surface lighting, live 3D sharpening, thermal and custom three-stop color maps, and depth-range controls
+- Transfer-function presets, threshold, opacity, window, level, ray detail, live 3D sharpening, thermal and custom three-stop color maps, and depth-range controls
+- Controllable directional volume lighting with intensity, azimuth, elevation, and Front/Side/Rim presets
 - Browser Back navigation and Lumen-brand navigation to the library
 - Fullscreen, auto-orbit, reset, and PNG capture
 - Responsive desktop and mobile layouts

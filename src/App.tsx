@@ -47,6 +47,8 @@ const DEFAULT_VOLUME_SETTINGS: VolumeSettings = {
   level: 0.46,
   detail: 0.62,
   shading: 0.72,
+  lightAzimuth: -35,
+  lightElevation: 30,
   sharpness: 0.34,
   palette: 'cyan',
   customPalette: ['#10152e', '#b329ff', '#fff06a'],

@@ -24,6 +24,12 @@ const volumePresets: Array<{ name: string; settings: Partial<VolumeSettings> }> 
   { name: 'Transparent', settings: { threshold: 0.08, opacity: 0.26, window: 0.92, level: 0.43 } },
 ]
 
+const lightPresets: Array<{ name: string; settings: Partial<VolumeSettings> }> = [
+  { name: 'Front', settings: { shading: 0.7, lightAzimuth: 0, lightElevation: 25 } },
+  { name: 'Side', settings: { shading: 0.82, lightAzimuth: 90, lightElevation: 15 } },
+  { name: 'Rim', settings: { shading: 0.9, lightAzimuth: 155, lightElevation: 38 } },
+]
+
 function PalettePicker({
   value,
   customColors,
@@ -166,7 +172,7 @@ export function ControlPanel({
         <div className="orientation-grid">
           <button type="button" onClick={() => onSetView('perspective')}>3D</button>
           <button type="button" onClick={() => onSetView('slices')}>Slices</button>
-          <button type="button" onClick={() => onSetView('side')}>Side</button>
+          <button type="button" aria-label="Side view" onClick={() => onSetView('side')}>Side</button>
           <button type="button" onClick={() => onSetView('top')}>Top</button>
         </div>
         <div className="section-label rotate-label">
@@ -213,16 +219,54 @@ export function ControlPanel({
           onChange={(detail) => updateVolume({ detail })}
         />
         <RangeControl
-          label="Surface lighting"
+          label="3D sharpening"
+          value={volumeSettings.sharpness}
+          displayValue={`${Math.round(volumeSettings.sharpness * 100)}%`}
+          onChange={(sharpness) => updateVolume({ sharpness })}
+        />
+      </section>
+
+      <section className="control-section slider-stack">
+        <div className="section-label">
+          <Sparkles size={14} />
+          <span>Directional lighting</span>
+          <small>Live volume normals</small>
+        </div>
+        <div className="preset-grid lighting-presets" role="group" aria-label="Lighting presets">
+          {lightPresets.map((preset) => (
+            <button
+              key={preset.name}
+              type="button"
+              aria-label={`${preset.name} lighting`}
+              onClick={() => updateVolume(preset.settings)}
+            >
+              {preset.name}
+            </button>
+          ))}
+        </div>
+        <RangeControl
+          label="Light intensity"
           value={volumeSettings.shading}
           displayValue={`${Math.round(volumeSettings.shading * 100)}%`}
           onChange={(shading) => updateVolume({ shading })}
         />
         <RangeControl
-          label="3D sharpening"
-          value={volumeSettings.sharpness}
-          displayValue={`${Math.round(volumeSettings.sharpness * 100)}%`}
-          onChange={(sharpness) => updateVolume({ sharpness })}
+          label="Light azimuth"
+          value={volumeSettings.lightAzimuth}
+          min={-180}
+          max={180}
+          step={1}
+          displayValue={`${Math.round(volumeSettings.lightAzimuth)}°`}
+          onChange={(lightAzimuth) => updateVolume({ lightAzimuth })}
+        />
+        <RangeControl
+          label="Light elevation"
+          value={volumeSettings.lightElevation}
+          min={-80}
+          max={80}
+          step={1}
+          displayValue={`${Math.round(volumeSettings.lightElevation)}°`}
+          onChange={(lightElevation) => updateVolume({ lightElevation })}
         />
       </section>
 

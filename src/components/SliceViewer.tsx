@@ -1,5 +1,14 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { ChevronDown, ChevronUp, Crop, MousePointer2, RotateCcw } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronUp,
+  Crop,
+  MousePointer2,
+  RotateCcw,
+  Ruler,
+  SquareDashed,
+  Trash2,
+} from 'lucide-react'
 import type { CropBounds, VolumeData, VolumeSettings } from '../types'
 
 export interface SliceViewerHandle {
@@ -29,6 +38,28 @@ type CropInteraction =
   | { type: 'move'; startX: number; startY: number; bounds: CropBounds }
   | { type: 'resize'; corner: 'nw' | 'ne' | 'sw' | 'se'; bounds: CropBounds }
 
+type MeasurementTool = 'distance' | 'roi'
+
+interface MeasurementPoint {
+  x: number
+  y: number
+}
+
+interface Measurement {
+  id: number
+  tool: MeasurementTool
+  slice: number
+  start: MeasurementPoint
+  end: MeasurementPoint
+}
+
+type PointerInteraction = CropInteraction | {
+  type: 'measurement'
+  tool: MeasurementTool
+  slice: number
+  start: MeasurementPoint
+}
+
 function orientationLabels(orientation: string) {
   const name = orientation.toLowerCase()
   if (name.includes('sag')) return { top: 'S', right: 'P', bottom: 'I', left: 'A' }
@@ -49,8 +80,12 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
   }, forwardedRef) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const viewportRef = useRef<HTMLDivElement>(null)
-    const interactionRef = useRef<CropInteraction | null>(null)
+    const interactionRef = useRef<PointerInteraction | null>(null)
+    const measurementIdRef = useRef(0)
     const [canvasRect, setCanvasRect] = useState<CanvasRect | null>(null)
+    const [measurementTool, setMeasurementTool] = useState<MeasurementTool | null>(null)
+    const [measurements, setMeasurements] = useState<Measurement[]>([])
+    const [measurementDraft, setMeasurementDraft] = useState<Measurement | null>(null)
     const [width, height, depth] = volume.dimensions
     const safeIndex = Math.max(0, Math.min(depth - 1, sliceIndex))
     const labels = orientationLabels(volume.orientation)
@@ -117,6 +152,18 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       return () => observer.disconnect()
     }, [height, width])
 
+    useEffect(() => {
+      setMeasurements([])
+      setMeasurementDraft(null)
+      setMeasurementTool(null)
+      interactionRef.current = null
+    }, [volume.seriesId])
+
+    useEffect(() => {
+      setMeasurementDraft(null)
+      if (interactionRef.current?.type === 'measurement') interactionRef.current = null
+    }, [safeIndex])
+
     const stepSlice = (amount: number) => {
       onSliceChange(Math.max(0, Math.min(depth - 1, safeIndex + amount)))
     }
@@ -130,9 +177,27 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       }
     }
 
-    const beginCrop = (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!cropEditing) return
+    const beginInteraction = (event: React.PointerEvent<HTMLDivElement>) => {
       const point = cropPoint(event)
+      if (measurementTool) {
+        const draft: Measurement = {
+          id: -1,
+          tool: measurementTool,
+          slice: safeIndex,
+          start: point,
+          end: point,
+        }
+        interactionRef.current = {
+          type: 'measurement',
+          tool: measurementTool,
+          slice: safeIndex,
+          start: point,
+        }
+        setMeasurementDraft(draft)
+        event.currentTarget.setPointerCapture(event.pointerId)
+        return
+      }
+      if (!cropEditing) return
       const tolerance = 0.055
       const corners = [
         ['nw', cropBounds.minX, cropBounds.minY],
@@ -151,10 +216,21 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       event.currentTarget.setPointerCapture(event.pointerId)
     }
 
-    const updateCrop = (event: React.PointerEvent<HTMLDivElement>) => {
+    const updateInteraction = (event: React.PointerEvent<HTMLDivElement>) => {
       const interaction = interactionRef.current
-      if (!cropEditing || !interaction) return
+      if (!interaction) return
       const point = cropPoint(event)
+      if (interaction.type === 'measurement') {
+        setMeasurementDraft({
+          id: -1,
+          tool: interaction.tool,
+          slice: interaction.slice,
+          start: interaction.start,
+          end: point,
+        })
+        return
+      }
+      if (!cropEditing) return
       const minimum = 0.035
       if (interaction.type === 'draw') {
         const minX = Math.min(interaction.startX, point.x)
@@ -180,6 +256,73 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       }
     }
 
+    const finishInteraction = (event: React.PointerEvent<HTMLDivElement>) => {
+      const interaction = interactionRef.current
+      if (interaction?.type === 'measurement' && measurementDraft) {
+        const pixelWidth = Math.abs(measurementDraft.end.x - measurementDraft.start.x) * width
+        const pixelHeight = Math.abs(measurementDraft.end.y - measurementDraft.start.y) * height
+        const largeEnough = measurementDraft.tool === 'distance'
+          ? Math.hypot(pixelWidth, pixelHeight) >= 3
+          : pixelWidth >= 3 && pixelHeight >= 3
+        if (largeEnough) {
+          measurementIdRef.current += 1
+          setMeasurements((current) => [...current, {
+            ...measurementDraft,
+            id: measurementIdRef.current,
+          }])
+        }
+        setMeasurementDraft(null)
+      }
+      interactionRef.current = null
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+    }
+
+    const cancelInteraction = () => {
+      interactionRef.current = null
+      setMeasurementDraft(null)
+    }
+
+    const selectMeasurementTool = (tool: MeasurementTool) => {
+      const next = measurementTool === tool ? null : tool
+      setMeasurementTool(next)
+      setMeasurementDraft(null)
+      interactionRef.current = null
+      if (next) onCropEditingChange(false)
+    }
+
+    const measurementSummary = (measurement: Measurement) => {
+      const deltaX = (measurement.end.x - measurement.start.x) * Math.max(1, width - 1)
+      const deltaY = (measurement.end.y - measurement.start.y) * Math.max(1, height - 1)
+      if (measurement.tool === 'distance') {
+        const millimeters = Math.hypot(deltaX * volume.spacing[0], deltaY * volume.spacing[1])
+        return `${millimeters < 10 ? millimeters.toFixed(1) : millimeters.toFixed(0)} mm`
+      }
+
+      const minPixelX = Math.max(0, Math.min(width - 1, Math.floor(Math.min(measurement.start.x, measurement.end.x) * width)))
+      const maxPixelX = Math.max(minPixelX, Math.min(width - 1, Math.ceil(Math.max(measurement.start.x, measurement.end.x) * width) - 1))
+      const minPixelY = Math.max(0, Math.min(height - 1, Math.floor(Math.min(measurement.start.y, measurement.end.y) * height)))
+      const maxPixelY = Math.max(minPixelY, Math.min(height - 1, Math.ceil(Math.max(measurement.start.y, measurement.end.y) * height) - 1))
+      let signal = 0
+      let count = 0
+      const sliceOffset = measurement.slice * width * height
+      for (let y = minPixelY; y <= maxPixelY; y += 1) {
+        for (let x = minPixelX; x <= maxPixelX; x += 1) {
+          signal += volume.data[sliceOffset + y * width + x]
+          count += 1
+        }
+      }
+      const area = count * volume.spacing[0] * volume.spacing[1]
+      const mean = count ? signal / count : 0
+      return `${area < 100 ? area.toFixed(1) : area.toFixed(0)} mm² · μ ${mean.toFixed(0)}`
+    }
+
+    const currentMeasurements = measurements.filter((measurement) => measurement.slice === safeIndex)
+    const visibleMeasurements = measurementDraft?.slice === safeIndex
+      ? [...currentMeasurements, measurementDraft]
+      : currentMeasurements
+
     const cropped = cropBounds.minX > 0.001 || cropBounds.maxX < 0.999 ||
       cropBounds.minY > 0.001 || cropBounds.maxY < 0.999 ||
       cropBounds.minZ > 0.001 || cropBounds.maxZ < 0.999
@@ -197,16 +340,13 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
           <canvas ref={canvasRef} data-testid="slice-canvas" aria-label={`Slice ${safeIndex + 1} of ${depth}`} />
           {canvasRect ? (
             <div
-              className={cropEditing ? 'crop-overlay editing' : 'crop-overlay'}
+              className={`crop-overlay${cropEditing ? ' editing' : ''}${measurementTool ? ' measuring' : ''}`}
               data-testid="crop-overlay"
               style={canvasRect}
-              onPointerDown={beginCrop}
-              onPointerMove={updateCrop}
-              onPointerUp={(event) => {
-                interactionRef.current = null
-                event.currentTarget.releasePointerCapture(event.pointerId)
-              }}
-              onPointerCancel={() => { interactionRef.current = null }}
+              onPointerDown={beginInteraction}
+              onPointerMove={updateInteraction}
+              onPointerUp={finishInteraction}
+              onPointerCancel={cancelInteraction}
             >
               {cropped || cropEditing ? (
                 <div
@@ -223,8 +363,92 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                   <span>CROP VOLUME</span>
                 </div>
               ) : null}
+              {visibleMeasurements.length ? (
+                <>
+                  <svg
+                    className="measurement-overlay"
+                    viewBox={`0 0 ${width} ${height}`}
+                    preserveAspectRatio="none"
+                    aria-hidden="true"
+                  >
+                    {visibleMeasurements.map((measurement) => {
+                      const x1 = measurement.start.x * width
+                      const y1 = measurement.start.y * height
+                      const x2 = measurement.end.x * width
+                      const y2 = measurement.end.y * height
+                      return measurement.tool === 'distance' ? (
+                        <g key={measurement.id} className="distance-measurement">
+                          <line x1={x1} y1={y1} x2={x2} y2={y2} />
+                          <circle cx={x1} cy={y1} r="3.5" />
+                          <circle cx={x2} cy={y2} r="3.5" />
+                        </g>
+                      ) : (
+                        <rect
+                          key={measurement.id}
+                          className="roi-measurement"
+                          x={Math.min(x1, x2)}
+                          y={Math.min(y1, y2)}
+                          width={Math.abs(x2 - x1)}
+                          height={Math.abs(y2 - y1)}
+                        />
+                      )
+                    })}
+                  </svg>
+                  {visibleMeasurements.map((measurement) => {
+                    const labelX = measurement.tool === 'distance'
+                      ? (measurement.start.x + measurement.end.x) * 0.5
+                      : Math.max(measurement.start.x, measurement.end.x)
+                    const labelY = measurement.tool === 'distance'
+                      ? (measurement.start.y + measurement.end.y) * 0.5
+                      : Math.min(measurement.start.y, measurement.end.y)
+                    return (
+                      <span
+                        key={`label-${measurement.id}`}
+                        className={`measurement-label ${measurement.tool}`}
+                        style={{
+                          left: `${Math.max(0.05, Math.min(0.95, labelX)) * 100}%`,
+                          top: `${Math.max(0.05, Math.min(0.95, labelY)) * 100}%`,
+                        }}
+                      >
+                        {measurementSummary(measurement)}
+                      </span>
+                    )
+                  })}
+                </>
+              ) : null}
             </div>
           ) : null}
+          <div className="measurement-toolbar" role="toolbar" aria-label="Slice measurement tools">
+            <button
+              type="button"
+              className={measurementTool === 'distance' ? 'active' : ''}
+              aria-label="Distance measurement"
+              aria-pressed={measurementTool === 'distance'}
+              title="Measure distance in millimeters"
+              onClick={() => selectMeasurementTool('distance')}
+            >
+              <Ruler size={14} /><span>Distance</span>
+            </button>
+            <button
+              type="button"
+              className={measurementTool === 'roi' ? 'active' : ''}
+              aria-label="ROI area measurement"
+              aria-pressed={measurementTool === 'roi'}
+              title="Measure ROI area and mean signal"
+              onClick={() => selectMeasurementTool('roi')}
+            >
+              <SquareDashed size={14} /><span>ROI</span>
+            </button>
+            <button
+              type="button"
+              aria-label="Clear measurements on slice"
+              title="Clear measurements on this slice"
+              disabled={!currentMeasurements.length}
+              onClick={() => setMeasurements((current) => current.filter((measurement) => measurement.slice !== safeIndex))}
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
           <span className="orientation-marker marker-top">{labels.top}</span>
           <span className="orientation-marker marker-right">{labels.right}</span>
           <span className="orientation-marker marker-bottom">{labels.bottom}</span>
@@ -266,7 +490,11 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
               className={cropEditing ? 'active' : ''}
               type="button"
               aria-pressed={cropEditing}
-              onClick={() => onCropEditingChange(!cropEditing)}
+              onClick={() => {
+                setMeasurementTool(null)
+                setMeasurementDraft(null)
+                onCropEditingChange(!cropEditing)
+              }}
             >
               <Crop size={14} /><span>Crop 3D</span>
             </button>

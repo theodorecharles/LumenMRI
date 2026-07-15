@@ -31,6 +31,7 @@ export const volumeFragmentShader = /* glsl */ `
   uniform float uLevel;
   uniform float uSteps;
   uniform float uShading;
+  uniform vec3 uLightDirection;
   uniform float uSharpness;
   uniform vec3 uCropMin;
   uniform vec3 uCropMax;
@@ -124,7 +125,11 @@ export const volumeFragmentShader = /* glsl */ `
         value = clamp(value + edgeBoost, 0.0, 1.0);
         structure = smoothstep(uThreshold, min(1.0, uThreshold + 0.16), value);
         vec3 normal = normalize(gradient + vec3(0.0001));
-        float light = mix(1.0, 0.58 + 0.42 * abs(dot(normal, -rayDirection)), uShading);
+        vec3 viewNormal = faceforward(normal, rayDirection, normal);
+        float diffuse = max(dot(viewNormal, normalize(uLightDirection)), 0.0);
+        float rim = pow(1.0 - abs(dot(viewNormal, -rayDirection)), 2.0);
+        float directionalLight = 0.26 + diffuse * 0.72 + rim * 0.16;
+        float light = mix(1.0, directionalLight, uShading);
         float sampleAlpha = 1.0 - exp(-structure * uOpacity * stepLength * 14.0);
         vec3 sampleColor = palette(value) * light;
         accumulated.rgb += (1.0 - accumulated.a) * sampleColor * sampleAlpha;

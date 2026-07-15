@@ -51,6 +51,7 @@ interface Runtime {
   sliceMaterial: THREE.ShaderMaterial | null
   sliceTexture: THREE.DataTexture | null
   cropOutline: THREE.LineSegments | null
+  cropFaces: THREE.Mesh[]
   volumeSize: [number, number, number]
   cropBounds: CropBounds
   selectedSliceFraction: number
@@ -72,7 +73,8 @@ interface CropHandleDefinition {
   shortLabel: string
 }
 
-interface CropDrag {
+interface FaceCropDrag {
+  mode: 'face'
   pointerId: number
   axis: CropAxis
   bound: CropBound
@@ -83,6 +85,16 @@ interface CropDrag {
   pixelsPerFraction: number
   bounds: CropBounds
 }
+
+interface MoveCropDrag {
+  mode: 'move'
+  pointerId: number
+  plane: THREE.Plane
+  startWorld: THREE.Vector3
+  bounds: CropBounds
+}
+
+type CropDrag = FaceCropDrag | MoveCropDrag
 
 const CROP_HANDLES: CropHandleDefinition[] = [
   { id: 'min-x', axis: 'x', bound: 'minX', label: 'Drag left crop face', shortLabel: 'X−' },
@@ -131,6 +143,15 @@ function cropHandleLocalPosition(runtime: Runtime, handle: CropHandleDefinition)
   return center
 }
 
+function cropBoundCoordinate(bounds: CropBounds, bound: CropBound) {
+  if (bound === 'minX') return bounds.minX
+  if (bound === 'maxX') return bounds.maxX
+  if (bound === 'minY') return 1 - bounds.minY
+  if (bound === 'maxY') return 1 - bounds.maxY
+  if (bound === 'minZ') return bounds.minZ
+  return bounds.maxZ
+}
+
 function projectToCanvas(runtime: Runtime, world: THREE.Vector3) {
   const projected = world.project(runtime.camera)
   const canvas = runtime.renderer.domElement
@@ -149,6 +170,40 @@ function updateCropOutline(runtime: Runtime, editing: boolean) {
   runtime.cropOutline.visible = editing || isCropped(runtime.cropBounds)
 }
 
+function updateCropFaces(runtime: Runtime, editing: boolean) {
+  const { center, scale } = cropBoxTransform(runtime)
+  const boundsMin = new THREE.Vector3(
+    runtime.cropBounds.minX,
+    1 - runtime.cropBounds.maxY,
+    runtime.cropBounds.minZ,
+  )
+  const boundsMax = new THREE.Vector3(
+    runtime.cropBounds.maxX,
+    1 - runtime.cropBounds.minY,
+    runtime.cropBounds.maxZ,
+  )
+
+  runtime.cropFaces.forEach((face, index) => {
+    const handle = CROP_HANDLES[index]
+    const material = face.material as THREE.ShaderMaterial
+    material.uniforms.uBoundsMin.value.copy(boundsMin)
+    material.uniforms.uBoundsMax.value.copy(boundsMax)
+    material.uniforms.uCoordinate.value = cropBoundCoordinate(runtime.cropBounds, handle.bound)
+    face.position.copy(center)
+    if (handle.axis === 'x') {
+      face.position.x = (cropBoundCoordinate(runtime.cropBounds, handle.bound) - 0.5) * runtime.volumeSize[0]
+      face.scale.set(scale.z, scale.y, 1)
+    } else if (handle.axis === 'y') {
+      face.position.y = (cropBoundCoordinate(runtime.cropBounds, handle.bound) - 0.5) * runtime.volumeSize[1]
+      face.scale.set(scale.x, scale.z, 1)
+    } else {
+      face.position.z = (cropBoundCoordinate(runtime.cropBounds, handle.bound) - 0.5) * runtime.volumeSize[2]
+      face.scale.set(scale.x, scale.y, 1)
+    }
+    face.visible = editing
+  })
+}
+
 function updateCropHandlePositions(
   runtime: Runtime,
   handles: Record<string, HTMLButtonElement | null>,
@@ -165,7 +220,72 @@ function updateCropHandlePositions(
     element.style.top = `${screen.y}px`
     element.style.visibility = screen.visible ? 'visible' : 'hidden'
   }
+  const moveHandle = handles.move
+  if (moveHandle) {
+    const world = cropBoxTransform(runtime).center
+      .applyMatrix4(runtime.volumeRoot.matrixWorld)
+    const screen = projectToCanvas(runtime, world)
+    moveHandle.style.left = `${screen.x}px`
+    moveHandle.style.top = `${screen.y}px`
+    moveHandle.style.visibility = screen.visible ? 'visible' : 'hidden'
+  }
+  const container = runtime.renderer.domElement.parentElement
+  const handlesReady = Boolean(moveHandle) && CROP_HANDLES.every((handle) => Boolean(handles[handle.id]))
+  if (container && handlesReady) container.dataset.cropHandlesReady = 'true'
 }
+
+const cropFaceVertexShader = /* glsl */ `
+  out vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`
+
+const cropFaceFragmentShader = /* glsl */ `
+  precision highp float;
+  precision highp sampler3D;
+  in vec2 vUv;
+  out vec4 outColor;
+  uniform sampler3D uData;
+  uniform int uAxis;
+  uniform float uCoordinate;
+  uniform vec3 uBoundsMin;
+  uniform vec3 uBoundsMax;
+  uniform float uWindow;
+  uniform float uLevel;
+
+  void main() {
+    vec3 uvw;
+    if (uAxis == 0) {
+      uvw = vec3(
+        uCoordinate,
+        mix(uBoundsMin.y, uBoundsMax.y, vUv.y),
+        mix(uBoundsMin.z, uBoundsMax.z, vUv.x)
+      );
+    } else if (uAxis == 1) {
+      uvw = vec3(
+        mix(uBoundsMin.x, uBoundsMax.x, vUv.x),
+        uCoordinate,
+        mix(uBoundsMin.z, uBoundsMax.z, vUv.y)
+      );
+    } else {
+      uvw = vec3(
+        mix(uBoundsMin.x, uBoundsMax.x, vUv.x),
+        mix(uBoundsMin.y, uBoundsMax.y, vUv.y),
+        uCoordinate
+      );
+    }
+    float raw = texture(uData, vec3(uvw.x, 1.0 - uvw.y, uvw.z)).r;
+    float low = uLevel - uWindow * 0.5;
+    float value = clamp((raw - low) / max(0.015, uWindow), 0.0, 1.0);
+    float edge = clamp((abs(dFdx(value)) + abs(dFdy(value))) * 1.35, 0.0, 0.22);
+    vec3 gray = vec3(clamp(value + edge, 0.0, 1.0));
+    vec3 color = mix(gray, vec3(0.22, 0.86, 1.0), 0.12);
+    float alpha = 0.1 + smoothstep(0.02, 0.32, value) * 0.76;
+    outColor = vec4(color, alpha);
+  }
+`
 
 function paletteColors(settings: VolumeSettings) {
   const colors = settings.palette === 'custom'
@@ -176,6 +296,17 @@ function paletteColors(settings: VolumeSettings) {
     THREE.Color,
     THREE.Color,
   ]
+}
+
+function lightDirection(settings: VolumeSettings) {
+  const azimuth = THREE.MathUtils.degToRad(settings.lightAzimuth)
+  const elevation = THREE.MathUtils.degToRad(settings.lightElevation)
+  const horizontal = Math.cos(elevation)
+  return new THREE.Vector3(
+    Math.sin(azimuth) * horizontal,
+    Math.sin(elevation),
+    Math.cos(azimuth) * horizontal,
+  ).normalize()
 }
 
 function disposeObject(object: THREE.Object3D) {
@@ -358,6 +489,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
     }, [autoRotate])
 
     useEffect(() => {
+      if (containerRef.current) containerRef.current.dataset.cropHandlesReady = 'false'
       if (cropEditing) return
       cropDragRef.current = null
       if (runtimeRef.current) runtimeRef.current.controls.enabled = true
@@ -405,6 +537,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       }
 
       cropDragRef.current = {
+        mode: 'face',
         pointerId: event.pointerId,
         axis: handle.axis,
         bound: handle.bound,
@@ -421,9 +554,84 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       event.stopPropagation()
     }
 
+    const beginMoveCropDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+      const runtime = runtimeRef.current
+      if (!runtime?.volumeRoot) return
+      runtime.volumeRoot.updateWorldMatrix(true, false)
+      const centerWorld = cropBoxTransform(runtime).center
+        .applyMatrix4(runtime.volumeRoot.matrixWorld)
+      const normal = new THREE.Vector3()
+      runtime.camera.getWorldDirection(normal)
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, centerWorld)
+      const canvasBounds = runtime.renderer.domElement.getBoundingClientRect()
+      const pointer = new THREE.Vector2(
+        ((event.clientX - canvasBounds.left) / canvasBounds.width) * 2 - 1,
+        -((event.clientY - canvasBounds.top) / canvasBounds.height) * 2 + 1,
+      )
+      const raycaster = new THREE.Raycaster()
+      raycaster.setFromCamera(pointer, runtime.camera)
+      const startWorld = new THREE.Vector3()
+      if (!raycaster.ray.intersectPlane(plane, startWorld)) return
+
+      cropDragRef.current = {
+        mode: 'move',
+        pointerId: event.pointerId,
+        plane,
+        startWorld,
+        bounds: { ...cropBounds },
+      }
+      if (containerRef.current) {
+        containerRef.current.dataset.cropDragMode = 'move'
+        containerRef.current.dataset.cropMoveDelta = '0.0000,0.0000,0.0000'
+      }
+      runtime.controls.enabled = false
+      event.currentTarget.setPointerCapture(event.pointerId)
+      event.preventDefault()
+      event.stopPropagation()
+    }
+
     const updateCropDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
       const drag = cropDragRef.current
       if (!drag || drag.pointerId !== event.pointerId) return
+      if (drag.mode === 'move') {
+        const runtime = runtimeRef.current
+        if (!runtime?.volumeRoot) return
+        const canvasBounds = runtime.renderer.domElement.getBoundingClientRect()
+        const pointer = new THREE.Vector2(
+          ((event.clientX - canvasBounds.left) / canvasBounds.width) * 2 - 1,
+          -((event.clientY - canvasBounds.top) / canvasBounds.height) * 2 + 1,
+        )
+        const raycaster = new THREE.Raycaster()
+        raycaster.setFromCamera(pointer, runtime.camera)
+        const currentWorld = new THREE.Vector3()
+        if (!raycaster.ray.intersectPlane(drag.plane, currentWorld)) return
+        runtime.volumeRoot.updateWorldMatrix(true, false)
+        const inverseRoot = runtime.volumeRoot.matrixWorld.clone().invert()
+        const startLocal = drag.startWorld.clone().applyMatrix4(inverseRoot)
+        const currentLocal = currentWorld.applyMatrix4(inverseRoot)
+        const localDelta = currentLocal.sub(startLocal)
+        const requestedX = localDelta.x / runtime.volumeSize[0]
+        const requestedY = -localDelta.y / runtime.volumeSize[1]
+        const requestedZ = localDelta.z / runtime.volumeSize[2]
+        const deltaX = clamp(requestedX, -drag.bounds.minX, 1 - drag.bounds.maxX)
+        const deltaY = clamp(requestedY, -drag.bounds.minY, 1 - drag.bounds.maxY)
+        const deltaZ = clamp(requestedZ, -drag.bounds.minZ, 1 - drag.bounds.maxZ)
+        if (containerRef.current) {
+          containerRef.current.dataset.cropMoveDelta = [deltaX, deltaY, deltaZ]
+            .map((value) => value.toFixed(4)).join(',')
+        }
+        onCropChange({
+          minX: drag.bounds.minX + deltaX,
+          maxX: drag.bounds.maxX + deltaX,
+          minY: drag.bounds.minY + deltaY,
+          maxY: drag.bounds.maxY + deltaY,
+          minZ: drag.bounds.minZ + deltaZ,
+          maxZ: drag.bounds.maxZ + deltaZ,
+        })
+        event.preventDefault()
+        event.stopPropagation()
+        return
+      }
       const screenDelta =
         (event.clientX - drag.startX) * drag.screenAxisX +
         (event.clientY - drag.startY) * drag.screenAxisY
@@ -448,6 +656,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       const drag = cropDragRef.current
       if (!drag || drag.pointerId !== event.pointerId) return
       cropDragRef.current = null
+      if (containerRef.current) containerRef.current.dataset.cropDragMode = 'idle'
       const runtime = runtimeRef.current
       if (runtime) {
         runtime.controls.enabled = true
@@ -584,6 +793,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         sliceMaterial: null,
         sliceTexture: null,
         cropOutline: null,
+        cropFaces: [],
         volumeSize: [1, 1, 1],
         cropBounds: {
           minX: 0,
@@ -663,8 +873,10 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       const texture = new THREE.Data3DTexture(renderData, width, height, depth)
       texture.format = THREE.RedFormat
       texture.type = THREE.UnsignedByteType
-      texture.minFilter = THREE.NearestFilter
-      texture.magFilter = THREE.NearestFilter
+      // Volume rays use texelFetch for hard in-plane edges, while the crop-face
+      // cross-sections use filtered texture() sampling from this same texture.
+      texture.minFilter = THREE.LinearFilter
+      texture.magFilter = THREE.LinearFilter
       texture.unpackAlignment = 1
       texture.needsUpdate = true
 
@@ -687,6 +899,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
           uLevel: { value: volumeSettings.level },
           uSteps: { value: Math.round(112 + volumeSettings.detail * 320) },
           uShading: { value: volumeSettings.shading },
+          uLightDirection: { value: lightDirection(volumeSettings) },
           uSharpness: { value: volumeSettings.sharpness },
           uCropMin: { value: new THREE.Vector3(
             cropBounds.minX,
@@ -719,6 +932,42 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       )
       cropOutline.renderOrder = 18
       root.add(cropOutline)
+      const cropFaces = CROP_HANDLES.map((handle) => {
+        const axis = handle.axis === 'x' ? 0 : handle.axis === 'y' ? 1 : 2
+        const faceMaterial = new THREE.ShaderMaterial({
+          glslVersion: THREE.GLSL3,
+          vertexShader: cropFaceVertexShader,
+          fragmentShader: cropFaceFragmentShader,
+          uniforms: {
+            uData: { value: texture },
+            uAxis: { value: axis },
+            uCoordinate: { value: cropBoundCoordinate(cropBounds, handle.bound) },
+            uBoundsMin: { value: new THREE.Vector3(
+              cropBounds.minX,
+              1 - cropBounds.maxY,
+              cropBounds.minZ,
+            ) },
+            uBoundsMax: { value: new THREE.Vector3(
+              cropBounds.maxX,
+              1 - cropBounds.minY,
+              cropBounds.maxZ,
+            ) },
+            uWindow: { value: volumeSettings.window },
+            uLevel: { value: volumeSettings.level },
+          },
+          side: THREE.DoubleSide,
+          transparent: true,
+          depthWrite: false,
+          depthTest: true,
+        })
+        const face = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), faceMaterial)
+        if (handle.axis === 'x') face.rotation.y = -Math.PI / 2
+        else if (handle.axis === 'y') face.rotation.x = Math.PI / 2
+        face.renderOrder = 16
+        face.visible = false
+        root.add(face)
+        return face
+      })
 
       const safeIndex = Math.max(0, Math.min(sourceDepth - 1, sliceIndex))
       const sourceSliceSize = sourceWidth * sourceHeight
@@ -817,12 +1066,14 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       runtime.sliceMaterial = sliceMaterial
       runtime.sliceTexture = sliceTexture
       runtime.cropOutline = cropOutline
+      runtime.cropFaces = cropFaces
       runtime.volumeSize = size
       runtime.cropBounds = cropBounds
       runtime.selectedSliceFraction = selectedSliceFraction
       runtime.sliceHighlightRequested = showSliceHighlight
       runtime.currentSeriesId = volume.seriesId
       updateCropOutline(runtime, cropEditing)
+      updateCropFaces(runtime, cropEditing)
       recenterVisibleVolume(runtime)
       if (!sameSeries) positionCamera(runtime, 'perspective')
       runtime.needsRender = true
@@ -841,6 +1092,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       material.uniforms.uLevel.value = volumeSettings.level
       material.uniforms.uSteps.value = Math.round(112 + volumeSettings.detail * 320)
       material.uniforms.uShading.value = volumeSettings.shading
+      material.uniforms.uLightDirection.value.copy(lightDirection(volumeSettings))
       material.uniforms.uSharpness.value = volumeSettings.sharpness
       const sliceMaterial = runtimeRef.current?.sliceMaterial
       if (sliceMaterial) {
@@ -848,7 +1100,14 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         sliceMaterial.uniforms.uLevel.value = volumeSettings.level
       }
       const runtime = runtimeRef.current
-      if (runtime) runtime.needsRender = true
+      if (runtime) {
+        runtime.cropFaces.forEach((face) => {
+          const faceMaterial = face.material as THREE.ShaderMaterial
+          faceMaterial.uniforms.uWindow.value = volumeSettings.window
+          faceMaterial.uniforms.uLevel.value = volumeSettings.level
+        })
+        runtime.needsRender = true
+      }
     }, [volumeSettings])
 
     useEffect(() => {
@@ -906,6 +1165,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
           ].map((value) => value.toFixed(4)).join(','),
         )
         updateCropOutline(runtime, cropEditing)
+        updateCropFaces(runtime, cropEditing)
         updateSliceVisibility(runtime)
         if (!cropDragRef.current) recenterVisibleVolume(runtime)
         runtime.needsRender = true
@@ -913,7 +1173,11 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
     }, [cropBounds, cropEditing])
 
     return (
-      <div className="viewer-canvas" ref={containerRef}>
+      <div
+        className="viewer-canvas"
+        ref={containerRef}
+        data-crop-cross-sections={cropEditing ? '6' : '0'}
+      >
         {renderError ? (
           <div className="viewer-error" role="alert">
             <span>GPU unavailable</span>
@@ -938,7 +1202,20 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
                 {handle.shortLabel}
               </button>
             ))}
-            <div className="crop-3d-help">Drag faces to crop · Orbit outside the box</div>
+            <button
+              ref={(element) => { cropHandleRefs.current.move = element }}
+              className="crop-move-handle"
+              type="button"
+              aria-label="Move entire crop box"
+              title="Move entire crop box"
+              onPointerDown={beginMoveCropDrag}
+              onPointerMove={updateCropDrag}
+              onPointerUp={finishCropDrag}
+              onPointerCancel={finishCropDrag}
+            >
+              <span aria-hidden="true">✥</span>
+            </button>
+            <div className="crop-3d-help">Drag faces to crop · Drag center to move · Orbit outside</div>
           </div>
         ) : null}
         <div className="view-cube" role="group" aria-label="Anatomical view cube">
