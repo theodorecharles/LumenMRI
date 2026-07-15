@@ -131,6 +131,13 @@ export default function App() {
     inputRef.current?.setAttribute('directory', '')
   }, [])
 
+  // Terminal reconstruction failure: stay on acquired data, never leave Enhanced "Processing".
+  useEffect(() => {
+    if (reconstruction.status === 'error') {
+      setReconstructionEnabled(false)
+    }
+  }, [reconstruction.status])
+
   useEffect(() => {
     if (!series.length || activeSeriesId) return
     const recommended = series.find((item) => item.supported)
@@ -595,6 +602,8 @@ export default function App() {
             onProjectionChange={setCameraProjection}
             reconstructionEnabled={reconstructionEnabled}
             reconstructionReady={reconstruction.volume?.seriesId === volume?.seriesId}
+            reconstructionStatus={reconstruction.status}
+            reconstructionMessage={reconstruction.message}
             onReconstructionEnabledChange={setReconstructionEnabled}
             cropBounds={cropBounds}
             onCropChange={setCropBounds}
