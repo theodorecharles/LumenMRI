@@ -75,6 +75,8 @@ export interface CropBounds {
 export type WorkerRequest =
   | { type: 'scan'; files: File[] }
   | { type: 'load-series'; seriesId: string }
+  /** Invalidate in-flight scan/load without clearing the series index. */
+  | { type: 'cancel' }
   | { type: 'reset' }
 
 export type WorkerResponse =

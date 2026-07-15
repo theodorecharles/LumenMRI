@@ -72,7 +72,8 @@ export default function App() {
   const sliceViewerRef = useRef<SliceViewerHandle>(null)
   const stageRef = useRef<HTMLElement>(null)
   const volumeCache = useRef(new Map<string, VolumeData>())
-  const { series, volume, setVolume, progress, error, scanFiles, loadSeries } = useDicomLoader()
+  const { series, volume, setVolume, progress, error, scanFiles, loadSeries, abandonLoad } =
+    useDicomLoader()
   const reconstruction = useVolumeReconstruction(volume)
   const [screen, setScreen] = useState<Screen>('library')
   const [catalog, setCatalog] = useState<BundledCatalog | null>(null)
@@ -215,12 +216,14 @@ export default function App() {
   }, [bundledSeries, loadSeries, openBundledSeries, series])
 
   const goHome = useCallback((pushHistory = true) => {
+    // Drop in-flight local decode so a late volume-ready cannot clobber bundled/demo later.
+    abandonLoad()
     setScreen('library')
     setAutoRotate(false)
     if (pushHistory) {
       window.history.pushState({ screen: 'library' }, '', `${window.location.pathname}${window.location.search}`)
     }
-  }, [])
+  }, [abandonLoad])
 
   const handleFiles = useCallback(
     (files: File[]) => {

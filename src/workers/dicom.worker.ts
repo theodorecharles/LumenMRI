@@ -55,9 +55,9 @@ interface SliceRecord {
 
 let recordsBySeries = new Map<string, SliceRecord[]>()
 let openJPEGPromise: ReturnType<typeof OpenJPEGJS> | null = null
-/** Monotonic token: scan/reset bump it so in-flight work can stop without posting stale results. */
+/** Monotonic token: scan/load-series/cancel/reset bump it so in-flight work can stop without posting stale results. */
 let jobGeneration = 0
-/** Promise chain that forces scan/load/reset to run one at a time. */
+/** Promise chain that forces scan/load/cancel/reset to run one at a time. */
 let jobQueue: Promise<void> = Promise.resolve()
 
 class JobCancelled extends Error {
@@ -476,8 +476,15 @@ async function loadSeries(seriesId: string, generation: number) {
 worker.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
   const data = event.data
 
-  // scan/reset invalidate in-flight work and any queued jobs from older generations.
-  if (data.type === 'scan' || data.type === 'reset') {
+  // scan / load-series / cancel / reset invalidate in-flight work and queued older generations.
+  // load-series bumps so a new series selection cancels a prior decode; cancel abandons load
+  // without wiping recordsBySeries (bundled/demo open while a local load is running).
+  if (
+    data.type === 'scan' ||
+    data.type === 'load-series' ||
+    data.type === 'cancel' ||
+    data.type === 'reset'
+  ) {
     jobGeneration += 1
   }
   const generation = jobGeneration
@@ -495,6 +502,8 @@ worker.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
           break
         case 'load-series':
           await loadSeries(data.seriesId, generation)
+          break
+        case 'cancel':
           break
         case 'reset':
           recordsBySeries = new Map()
