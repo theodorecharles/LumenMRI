@@ -45,6 +45,7 @@ export function useDicomLoader() {
           break
         case 'volume-ready':
           setVolume(message.volume)
+          setError(null)
           setProgress({ phase: 'ready', progress: 1, label: 'GPU volume ready' })
           break
         case 'error':
@@ -58,6 +59,18 @@ export function useDicomLoader() {
   }, [])
 
   const send = useCallback((message: WorkerRequest) => workerRef.current?.postMessage(message), [])
+
+  // Bundled / demo paths set volume outside the worker. Always clear sticky error
+  // and progress so stage-inline-error and footer is-error do not outlive a valid open.
+  const setVolumeClearingError = useCallback((next: VolumeData | null) => {
+    setVolume(next)
+    setError(null)
+    setProgress(
+      next
+        ? { phase: 'ready', progress: 1, label: 'GPU volume ready' }
+        : IDLE_PROGRESS,
+    )
+  }, [])
 
   const scanFiles = useCallback(
     (files: File[]) => {
@@ -88,5 +101,14 @@ export function useDicomLoader() {
     setProgress(IDLE_PROGRESS)
   }, [send])
 
-  return { series, volume, setVolume, progress, error, scanFiles, loadSeries, reset }
+  return {
+    series,
+    volume,
+    setVolume: setVolumeClearingError,
+    progress,
+    error,
+    scanFiles,
+    loadSeries,
+    reset,
+  }
 }
