@@ -786,6 +786,35 @@ button:disabled {
   color: var(--cyan);
 }
 
+.stage-inline-error {
+  position: absolute;
+  z-index: 11;
+  top: 58px;
+  left: 50%;
+  width: min(460px, calc(100% - 32px));
+  padding: 10px 14px;
+  transform: translateX(-50%);
+  color: #ff9d87;
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: center;
+  border: 1px solid rgba(255, 115, 80, 0.28);
+  border-radius: 8px;
+  background: rgba(28, 10, 8, 0.92);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(16px);
+}
+
+.footer-ready.is-error,
+.footer-ready.is-error i {
+  color: #ff9d87;
+}
+
+.footer-ready.is-error i {
+  background: #ff9d87;
+  box-shadow: 0 0 8px rgba(255, 157, 135, 0.55);
+}
+
 .stage-progress {
   position: absolute;
   z-index: 10;

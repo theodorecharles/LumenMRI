@@ -139,6 +139,13 @@ export default function App() {
     loadSeries(recommended.id)
   }, [activeSeriesId, loadSeries, series])
 
+  // Failed loads leave the previous volume in place. Revert the series highlight
+  // to the last successful volume (or clear it) so the panel matches the stage.
+  useEffect(() => {
+    if (progress.phase !== 'error') return
+    setActiveSeriesId(volume?.seriesId ?? null)
+  }, [progress.phase, volume])
+
   const pushViewerLocation = useCallback((id: string) => {
     window.history.pushState({ screen: 'viewer', seriesId: id }, '', `#series/${id}`)
   }, [])
@@ -553,6 +560,12 @@ export default function App() {
                   ) : null}
                 </div>
 
+                {error ? (
+                  <div className="stage-inline-error" role="alert">
+                    {error}
+                  </div>
+                ) : null}
+
                 {busy || (reconstruction.status === 'processing' && viewerLayout !== 'slice') ? (
                   <div className="stage-progress" role="status">
                     <div>
@@ -607,7 +620,10 @@ export default function App() {
       <footer className="app-footer">
         <span><Box size={12} /> {screen === 'library' ? `${bundledSeries.length} included sequences` : volume?.description || 'No active volume'}</span>
         <span>All scan data stays on this device</span>
-        <span className="footer-ready"><i /> {busy ? progress.label : 'Renderer ready'}</span>
+        <span className={error || progress.phase === 'error' ? 'footer-ready is-error' : 'footer-ready'}>
+          <i />
+          {busy ? progress.label : error || progress.phase === 'error' ? progress.label || error : 'Renderer ready'}
+        </span>
       </footer>
     </div>
   )
