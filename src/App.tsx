@@ -302,10 +302,23 @@ export default function App() {
       if (event.key === '1') setViewerLayout('volume')
       if (event.key === '2') setViewerLayout('slice')
       if (event.key === '3') setViewerLayout('split')
+      if (volume) {
+        const depth = volume.dimensions[2]
+        const step =
+          event.key === 'ArrowUp' || event.key === ','
+            ? -1
+            : event.key === 'ArrowDown' || event.key === '.'
+              ? 1
+              : 0
+        if (step !== 0) {
+          event.preventDefault()
+          setSliceIndex((current) => Math.max(0, Math.min(depth - 1, current + step)))
+        }
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [captureActiveView, goHome, isStageFullscreen, toggleStageFullscreen])
+  }, [captureActiveView, goHome, isStageFullscreen, toggleStageFullscreen, volume])
 
   const onDrop = async (event: React.DragEvent) => {
     event.preventDefault()
