@@ -11,11 +11,23 @@ interface ControlPanelProps {
   onProjectionChange: (projection: CameraProjection) => void
   reconstructionEnabled: boolean
   reconstructionReady: boolean
+  reconstructionStatus: 'idle' | 'processing' | 'ready' | 'error'
+  reconstructionMessage: string
   onReconstructionEnabledChange: (enabled: boolean) => void
   cropBounds: CropBounds
   onCropChange: (bounds: CropBounds) => void
   onSetView: (view: CameraView) => void
   onRotate: (axis: 'x' | 'y' | 'z') => void
+}
+
+function reconstructionStatusLabel(
+  ready: boolean,
+  status: ControlPanelProps['reconstructionStatus'],
+): string {
+  if (ready || status === 'ready') return 'Ready'
+  if (status === 'error') return 'Unavailable'
+  if (status === 'processing') return 'Processing'
+  return 'Waiting'
 }
 
 const volumePresets: Array<{ name: string; settings: Partial<VolumeSettings> }> = [
@@ -87,6 +99,8 @@ export function ControlPanel({
   onProjectionChange,
   reconstructionEnabled,
   reconstructionReady,
+  reconstructionStatus,
+  reconstructionMessage,
   onReconstructionEnabledChange,
   cropBounds,
   onCropChange,
@@ -95,6 +109,8 @@ export function ControlPanel({
 }: ControlPanelProps) {
   const updateVolume = (patch: Partial<VolumeSettings>) =>
     setVolumeSettings({ ...volumeSettings, ...patch })
+  const reconstructionLabel = reconstructionStatusLabel(reconstructionReady, reconstructionStatus)
+  const reconstructionFailed = reconstructionStatus === 'error'
 
   return (
     <aside className="control-panel" aria-label="Rendering controls">
@@ -124,7 +140,7 @@ export function ControlPanel({
         <div className="section-label">
           <Layers3 size={14} />
           <span>3D reconstruction</span>
-          <small>{reconstructionReady ? 'Ready' : 'Processing'}</small>
+          <small data-status={reconstructionStatus}>{reconstructionLabel}</small>
         </div>
         <div className="mode-grid" role="group" aria-label="3D reconstruction mode">
           <button
@@ -140,11 +156,18 @@ export function ControlPanel({
             type="button"
             aria-pressed={reconstructionEnabled}
             disabled={!reconstructionReady}
+            title={reconstructionFailed ? reconstructionMessage : undefined}
+            data-unavailable={reconstructionFailed ? 'true' : undefined}
             onClick={() => onReconstructionEnabledChange(true)}
           >
             Enhanced
           </button>
         </div>
+        {reconstructionFailed && reconstructionMessage ? (
+          <p className="reconstruction-status-message" role="status">
+            {reconstructionMessage}
+          </p>
+        ) : null}
       </section>
 
       <section className="control-section">
