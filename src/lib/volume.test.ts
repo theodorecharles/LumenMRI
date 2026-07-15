@@ -1,10 +1,39 @@
 import { describe, expect, it } from 'vitest'
-import { createDemoVolume, normalizePhysicalSize } from './volume'
+import {
+  createDemoVolume,
+  mapRelativeSliceIndex,
+  midSliceIndex,
+  normalizePhysicalSize,
+} from './volume'
 import { planVolumeReconstruction, reconstructVolume } from './reconstructVolume'
 
 describe('volume utilities', () => {
   it('normalizes physical dimensions without changing their aspect ratio', () => {
     expect(normalizePhysicalSize([100, 200, 50])).toEqual([0.5, 1, 0.25])
+  })
+
+  it('maps relative stack depth when switching series', () => {
+    // Same fractional depth: mid of 21 → mid of 41
+    expect(mapRelativeSliceIndex(10, 21, 41)).toBe(20)
+    // First / last endpoint preserve
+    expect(mapRelativeSliceIndex(0, 21, 41)).toBe(0)
+    expect(mapRelativeSliceIndex(20, 21, 41)).toBe(40)
+    // Quarter depth: 5/20 = 0.25 → round(0.25 * 40) = 10
+    expect(mapRelativeSliceIndex(5, 21, 41)).toBe(10)
+    // Clamps out-of-range previous index
+    expect(mapRelativeSliceIndex(99, 21, 10)).toBe(9)
+    // No prior context / single-slice prior → mid of next
+    expect(mapRelativeSliceIndex(0, 0, 21)).toBe(midSliceIndex(21))
+    expect(mapRelativeSliceIndex(0, 1, 21)).toBe(midSliceIndex(21))
+    // Degenerate next depth
+    expect(mapRelativeSliceIndex(5, 21, 1)).toBe(0)
+    expect(mapRelativeSliceIndex(5, 21, 0)).toBe(0)
+  })
+
+  it('computes mid-stack index', () => {
+    expect(midSliceIndex(21)).toBe(10)
+    expect(midSliceIndex(1)).toBe(0)
+    expect(midSliceIndex(0)).toBe(0)
   })
 
   it('creates a non-empty, MRI-like demo volume', () => {
