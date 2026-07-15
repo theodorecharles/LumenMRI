@@ -55,9 +55,29 @@ interface SliceRecord {
 
 let recordsBySeries = new Map<string, SliceRecord[]>()
 let openJPEGPromise: ReturnType<typeof OpenJPEGJS> | null = null
+/** Monotonic token: scan/reset bump it so in-flight work can stop without posting stale results. */
+let jobGeneration = 0
+/** Promise chain that forces scan/load/reset to run one at a time. */
+let jobQueue: Promise<void> = Promise.resolve()
+
+class JobCancelled extends Error {
+  constructor() {
+    super('Job cancelled')
+    this.name = 'JobCancelled'
+  }
+}
+
+function assertJobActive(generation: number) {
+  if (generation !== jobGeneration) throw new JobCancelled()
+}
 
 function post(message: WorkerResponse, transfer: Transferable[] = []) {
   worker.postMessage(message, transfer)
+}
+
+function postIfActive(generation: number, message: WorkerResponse, transfer: Transferable[] = []) {
+  assertJobActive(generation)
+  post(message, transfer)
 }
 
 function cleanString(dataSet: DataSet, tag: string, fallback = ''): string {
@@ -209,15 +229,17 @@ function summarize(records: SliceRecord[]): SeriesSummary {
   }
 }
 
-async function scanFiles(files: File[]) {
+async function scanFiles(files: File[], generation: number) {
   recordsBySeries = new Map()
   let dicomCount = 0
 
   for (let index = 0; index < files.length; index += 1) {
+    assertJobActive(generation)
     const file = files[index]
     if (file.size >= 132) {
       try {
         const buffer = await file.arrayBuffer()
+        assertJobActive(generation)
         const dataSet = dicomParser.parseDicom(new Uint8Array(buffer), {
           untilTag: 'x7fe00010',
         })
@@ -228,13 +250,14 @@ async function scanFiles(files: File[]) {
           recordsBySeries.set(record.seriesId, group)
           dicomCount += 1
         }
-      } catch {
+      } catch (error) {
+        if (error instanceof JobCancelled) throw error
         // Folder exports commonly contain launchers and text files. Ignore non-DICOM input.
       }
     }
 
     if (index % 4 === 0 || index === files.length - 1) {
-      post({
+      postIfActive(generation, {
         type: 'scan-progress',
         progress: (index + 1) / Math.max(files.length, 1),
         label: `Indexing ${index + 1} of ${files.length} files`,
@@ -249,7 +272,7 @@ async function scanFiles(files: File[]) {
   const series = [...recordsBySeries.values()]
     .map(summarize)
     .sort((a, b) => b.score - a.score)
-  post({ type: 'scan-complete', series })
+  postIfActive(generation, { type: 'scan-complete', series })
 }
 
 function compressedPixels(dataSet: DataSet): Uint8Array {
@@ -375,10 +398,12 @@ function percentileBounds(
   ]
 }
 
-async function loadSeries(seriesId: string) {
+async function loadSeries(seriesId: string, generation: number) {
+  assertJobActive(generation)
   const source = recordsBySeries.get(seriesId)
   if (!source?.length) throw new Error('That MRI series is no longer available.')
-  const records = sortRecords(source)
+  // Snapshot the series list so a later scan cannot mutate the array mid-load.
+  const records = sortRecords([...source])
   const summary = summarize(records)
   const { rows, columns } = records[0]
   const voxelCount = rows * columns * records.length
@@ -389,14 +414,17 @@ async function loadSeries(seriesId: string) {
   let max = Number.NEGATIVE_INFINITY
 
   for (let sliceIndex = 0; sliceIndex < records.length; sliceIndex += 1) {
+    assertJobActive(generation)
     const record = records[sliceIndex]
     if (record.rows !== rows || record.columns !== columns) {
       throw new Error('This series mixes incompatible slice dimensions.')
     }
 
     const buffer = await record.file.arrayBuffer()
+    assertJobActive(generation)
     const dataSet = dicomParser.parseDicom(new Uint8Array(buffer))
     const pixels = await decodePixels(dataSet, record)
+    assertJobActive(generation)
     const destinationOffset = sliceIndex * rows * columns
 
     for (let index = 0; index < pixels.length; index += 1) {
@@ -406,7 +434,7 @@ async function loadSeries(seriesId: string) {
       max = Math.max(max, value)
     }
 
-    post({
+    postIfActive(generation, {
       type: 'load-progress',
       progress: (sliceIndex + 1) / records.length,
       label: `Decoding layer ${sliceIndex + 1} of ${records.length}`,
@@ -415,6 +443,7 @@ async function loadSeries(seriesId: string) {
     if (sliceIndex % 3 === 0) await new Promise((resolve) => setTimeout(resolve, 0))
   }
 
+  assertJobActive(generation)
   const [windowLow, windowHigh] = percentileBounds(raw, min, max)
   const normalized = new Uint8Array(voxelCount)
   const range = Math.max(1, windowHigh - windowLow)
@@ -441,30 +470,45 @@ async function loadSeries(seriesId: string) {
     sliceCount: records.length,
   }
 
-  post({ type: 'volume-ready', volume }, [normalized.buffer])
+  postIfActive(generation, { type: 'volume-ready', volume }, [normalized.buffer])
 }
 
 worker.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
-  const run = async () => {
-    switch (event.data.type) {
-      case 'scan':
-        await scanFiles(event.data.files)
-        break
-      case 'load-series':
-        await loadSeries(event.data.seriesId)
-        break
-      case 'reset':
-        recordsBySeries = new Map()
-        break
-    }
-  }
+  const data = event.data
 
-  run().catch((error: unknown) => {
-    post({
-      type: 'error',
-      message: error instanceof Error ? error.message : 'The DICOM data could not be processed.',
+  // scan/reset invalidate in-flight work and any queued jobs from older generations.
+  if (data.type === 'scan' || data.type === 'reset') {
+    jobGeneration += 1
+  }
+  const generation = jobGeneration
+
+  jobQueue = jobQueue
+    .catch(() => {
+      // Keep the chain alive after a failed job so later work still runs.
     })
-  })
+    .then(async () => {
+      if (generation !== jobGeneration) return
+
+      switch (data.type) {
+        case 'scan':
+          await scanFiles(data.files, generation)
+          break
+        case 'load-series':
+          await loadSeries(data.seriesId, generation)
+          break
+        case 'reset':
+          recordsBySeries = new Map()
+          break
+      }
+    })
+    .catch((error: unknown) => {
+      if (error instanceof JobCancelled) return
+      if (generation !== jobGeneration) return
+      post({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'The DICOM data could not be processed.',
+      })
+    })
 })
 
 export {}
