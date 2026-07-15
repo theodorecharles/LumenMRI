@@ -358,7 +358,11 @@ export default function App() {
         className="visually-hidden"
         type="file"
         multiple
-        onChange={(event) => handleFiles([...(event.target.files || [])])}
+        onChange={(event) => {
+          handleFiles([...(event.target.files || [])])
+          // Allow re-selecting the same folder on the file-input fallback path.
+          event.target.value = ''
+        }}
       />
 
       {screen === 'library' ? (
