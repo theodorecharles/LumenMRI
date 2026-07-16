@@ -79,7 +79,8 @@ export default function App() {
   const sliceIndexRef = useRef(0)
   /** Sync guard so cancel + re-open in the same tick is not blocked by stale openingId state. */
   const openingIdRef = useRef<string | null>(null)
-  const { series, volume, setVolume, progress, error, setError, scanFiles, loadSeries } = useDicomLoader()
+  const { series, volume, setVolume, progress, error, setError, scanFiles, loadSeries, cancelInFlight } =
+    useDicomLoader()
   const reconstruction = useVolumeReconstruction(volume)
   const [screen, setScreen] = useState<Screen>('library')
   const [catalog, setCatalog] = useState<BundledCatalog | null>(null)
@@ -181,6 +182,9 @@ export default function App() {
       // Latest click wins: bump generation so an in-flight open cannot apply after a newer one.
       const generation = ++openGenerationRef.current
       openingIdRef.current = selection.id
+      // Cancel any in-flight local load-series before async fetch so volume-ready
+      // / load-progress cannot overwrite the bundled volume or flip progress.
+      cancelInFlight()
       setCatalogError(null)
       setError(null)
       setOpeningId(selection.id)
@@ -215,7 +219,7 @@ export default function App() {
         }
       }
     },
-    [pushViewerLocation, setError, setVolume, volume],
+    [cancelInFlight, pushViewerLocation, setError, setVolume, volume],
   )
 
   useEffect(() => {
