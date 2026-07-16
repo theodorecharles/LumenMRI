@@ -418,7 +418,13 @@ export default function App() {
   }, [handleFiles])
 
   const selectSeries = (selection: SeriesSummary) => {
-    if (selection.id === activeSeriesId || busy) return
+    if (busy) return
+    // Same-id is a no-op unless first load failed (error + no volume). Error-revert
+    // intentionally leaves activeSeriesId in that case to avoid auto-recommend loops;
+    // re-select must still retry the load.
+    if (selection.id === activeSeriesId) {
+      if (progress.phase !== 'error' || volume) return
+    }
     const included = bundledSeries.find((entry) => entry.id === selection.id)
     if (included) {
       void openBundledSeries(included)
