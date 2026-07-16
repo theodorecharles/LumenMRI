@@ -72,10 +72,14 @@ export default function App() {
   const sliceViewerRef = useRef<SliceViewerHandle>(null)
   const stageRef = useRef<HTMLElement>(null)
   const volumeCache = useRef(new Map<string, VolumeData>())
+  /** Bumps on each bundled open so a later click can supersede an in-flight load. */
+  const openGenerationRef = useRef(0)
   /** Through-plane depth of the last applied volume; null means no prior slice context. */
   const previousDepthRef = useRef<number | null>(null)
   const sliceIndexRef = useRef(0)
-  const { series, volume, setVolume, progress, error, scanFiles, loadSeries } = useDicomLoader()
+  /** Sync guard so cancel + re-open in the same tick is not blocked by stale openingId state. */
+  const openingIdRef = useRef<string | null>(null)
+  const { series, volume, setVolume, progress, error, setError, scanFiles, loadSeries } = useDicomLoader()
   const reconstruction = useVolumeReconstruction(volume)
   const [screen, setScreen] = useState<Screen>('library')
   const [catalog, setCatalog] = useState<BundledCatalog | null>(null)
@@ -166,50 +170,80 @@ export default function App() {
     window.history.pushState({ screen: 'viewer', seriesId: id }, '', `#series/${id}`)
   }, [])
 
+  const cancelPendingOpen = useCallback(() => {
+    openGenerationRef.current += 1
+    openingIdRef.current = null
+    setOpeningId(null)
+  }, [])
+
   const openBundledSeries = useCallback(
     async (selection: BundledSeries, pushHistory = true) => {
-      if (openingId) return
+      // Latest click wins: bump generation so an in-flight open cannot apply after a newer one.
+      const generation = ++openGenerationRef.current
+      openingIdRef.current = selection.id
       setCatalogError(null)
+      setError(null)
       setOpeningId(selection.id)
       try {
         let selectedVolume = volumeCache.current.get(selection.id)
         if (!selectedVolume) {
           selectedVolume = await loadBundledVolume(selection)
+          // Cache even if superseded/cancelled so a later open of the same series is free.
           volumeCache.current.set(selection.id, selectedVolume)
         }
+        // Stale generation (superseded click or user left open intent) — do not force viewer.
+        if (generation !== openGenerationRef.current) return
         setVolume(selectedVolume)
         setActiveSeriesId(selection.id)
         setScreen('viewer')
         if (pushHistory) pushViewerLocation(selection.id)
       } catch (loadError: unknown) {
-        setCatalogError(
-          loadError instanceof Error ? loadError.message : 'The selected volume could not be opened.',
-        )
-        setScreen('library')
+        if (generation !== openGenerationRef.current) return
+        const message =
+          loadError instanceof Error ? loadError.message : 'The selected volume could not be opened.'
+        // Keep a valid prior volume on the viewer; library-only fallback when nothing is loaded.
+        if (volume) {
+          setError(message)
+        } else {
+          setCatalogError(message)
+          setScreen('library')
+        }
       } finally {
-        setOpeningId(null)
+        if (generation === openGenerationRef.current) {
+          openingIdRef.current = null
+          setOpeningId(null)
+        }
       }
     },
-    [openingId, pushViewerLocation, setVolume],
+    [pushViewerLocation, setError, setVolume, volume],
   )
 
   useEffect(() => {
     const navigateFromHistory = () => {
       if (window.location.hash === '#local') {
+        cancelPendingOpen()
         setScreen('viewer')
         return
       }
       const match = window.location.hash.match(/^#series\/(.+)$/)
       if (!match) {
+        // Browser Back to library while a bundled open is in flight.
+        cancelPendingOpen()
         setScreen('library')
         return
       }
       const id = decodeURIComponent(match[1])
       const included = bundledSeries.find((entry) => entry.id === id)
-      if (included) void openBundledSeries(included, false)
-      else {
+      if (included) {
+        // Already loading this series — leave the in-flight open alone.
+        if (openingIdRef.current === included.id) return
+        // Different series (or idle): drop any pending open so history can win.
+        cancelPendingOpen()
+        void openBundledSeries(included, false)
+      } else {
         const local = series.find((entry) => entry.id === id)
         if (local) {
+          cancelPendingOpen()
           setActiveSeriesId(local.id)
           setScreen('viewer')
           loadSeries(local.id)
@@ -219,25 +253,28 @@ export default function App() {
     window.addEventListener('popstate', navigateFromHistory)
     if (bundledSeries.length && window.location.hash) navigateFromHistory()
     return () => window.removeEventListener('popstate', navigateFromHistory)
-  }, [bundledSeries, loadSeries, openBundledSeries, series])
+  }, [bundledSeries, cancelPendingOpen, loadSeries, openBundledSeries, series])
 
   const goHome = useCallback((pushHistory = true) => {
+    cancelPendingOpen()
     setScreen('library')
     setAutoRotate(false)
     if (pushHistory) {
       window.history.pushState({ screen: 'library' }, '', `${window.location.pathname}${window.location.search}`)
     }
-  }, [])
+  }, [cancelPendingOpen])
 
   const handleFiles = useCallback(
     (files: File[]) => {
       if (!files.length) return
+      // Drop any in-flight bundled open so a late fetch cannot overwrite this local intent.
+      cancelPendingOpen()
       setActiveSeriesId(null)
       setScreen('viewer')
       window.history.pushState({ screen: 'viewer', local: true }, '', '#local')
       scanFiles(files)
     },
-    [scanFiles],
+    [cancelPendingOpen, scanFiles],
   )
 
   const openFolder = useCallback(async () => {
@@ -297,13 +334,18 @@ export default function App() {
       return
     }
 
+    // Stage chrome only exists on the viewer; library has no stageRef.
+    // Without this guard, F still flips isStageFullscreen and CSS-hides header/footer.
+    const stage = stageRef.current
+    if (screen !== 'viewer' || !stage) return
+
     // iPhone Safari does not consistently support element fullscreen for WebGL.
     // Enter the app-level layout first, then enhance it with native fullscreen
     // on browsers that support it.
     setIsStageFullscreen(true)
-    const requestFullscreen = stageRef.current?.requestFullscreen
-    if (requestFullscreen) void requestFullscreen.call(stageRef.current).catch(() => undefined)
-  }, [isStageFullscreen])
+    const requestFullscreen = stage.requestFullscreen
+    if (requestFullscreen) void requestFullscreen.call(stage).catch(() => undefined)
+  }, [isStageFullscreen, screen])
 
   useEffect(() => {
     const onFullscreenChange = () => {
