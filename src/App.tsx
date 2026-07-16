@@ -2,12 +2,15 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import {
   Box,
   Camera,
+  CircleHelp,
   Columns2,
   Cpu,
   Crop,
   FolderOpen,
   LayoutGrid,
   Layers3,
+  Link2,
+  Link2Off,
   LockKeyhole,
   Maximize2,
   Minimize2,
@@ -16,6 +19,7 @@ import {
   Play,
   RotateCcw,
   ScanLine,
+  SquareSplitHorizontal,
 } from 'lucide-react'
 import { useDicomLoader } from './hooks/useDicomLoader'
 import { useVolumeReconstruction } from './hooks/useVolumeReconstruction'
@@ -33,8 +37,9 @@ import { ControlPanel } from './components/ControlPanel'
 import { EmptyStage } from './components/EmptyStage'
 import { ScanLibrary } from './components/ScanLibrary'
 import { SeriesPanel } from './components/SeriesPanel'
+import { ShortcutSheet } from './components/ShortcutSheet'
 import { SliceViewer, type SliceViewerHandle } from './components/SliceViewer'
-import type { ViewerStageHandle } from './components/ViewerStage'
+import type { ViewerStageHandle, VolumeSlicePick } from './components/ViewerStage'
 
 const ViewerStage = lazy(() =>
   import('./components/ViewerStage').then((module) => ({ default: module.ViewerStage })),
@@ -64,12 +69,18 @@ const FULL_CROP: CropBounds = {
 }
 
 type Screen = 'library' | 'viewer'
-type ViewerLayout = 'volume' | 'slice' | 'split'
+type ViewerLayout = 'volume' | 'slice' | 'split' | 'compare'
+
+const COMPARE_WL_DEFAULT: Pick<VolumeSettings, 'window' | 'level'> = {
+  window: DEFAULT_VOLUME_SETTINGS.window,
+  level: DEFAULT_VOLUME_SETTINGS.level,
+}
 
 export default function App() {
   const inputRef = useRef<HTMLInputElement>(null)
   const viewerRef = useRef<ViewerStageHandle>(null)
   const sliceViewerRef = useRef<SliceViewerHandle>(null)
+  const compareSliceViewerRef = useRef<SliceViewerHandle>(null)
   const stageRef = useRef<HTMLElement>(null)
   const volumeCache = useRef(new Map<string, VolumeData>())
   /** Bumps on each bundled open so a later click can supersede an in-flight load. */
@@ -77,8 +88,10 @@ export default function App() {
   /** Through-plane depth of the last applied volume; null means no prior slice context. */
   const previousDepthRef = useRef<number | null>(null)
   const sliceIndexRef = useRef(0)
+  const compareSliceIndexRef = useRef(0)
   /** Sync guard so cancel + re-open in the same tick is not blocked by stale openingId state. */
   const openingIdRef = useRef<string | null>(null)
+  const compareOpeningIdRef = useRef<string | null>(null)
   const { series, volume, setVolume, progress, error, setError, scanFiles, loadSeries, cancelInFlight } =
     useDicomLoader()
   const reconstruction = useVolumeReconstruction(volume)
@@ -88,6 +101,12 @@ export default function App() {
   const [catalogError, setCatalogError] = useState<string | null>(null)
   const [openingId, setOpeningId] = useState<string | null>(null)
   const [activeSeriesId, setActiveSeriesId] = useState<string | null>(null)
+  const [compareSeriesId, setCompareSeriesId] = useState<string | null>(null)
+  const [compareVolume, setCompareVolume] = useState<VolumeData | null>(null)
+  const [compareOpeningId, setCompareOpeningId] = useState<string | null>(null)
+  const [compareSettings, setCompareSettings] = useState(COMPARE_WL_DEFAULT)
+  const [compareSliceIndex, setCompareSliceIndex] = useState(0)
+  const [slicesLinked, setSlicesLinked] = useState(true)
   const [volumeSettings, setVolumeSettings] = useState(DEFAULT_VOLUME_SETTINGS)
   const [autoRotate, setAutoRotate] = useState(false)
   const [reconstructionEnabled, setReconstructionEnabled] = useState(true)
@@ -95,14 +114,23 @@ export default function App() {
   const [viewerLayout, setViewerLayout] = useState<ViewerLayout>('volume')
   const [sliceIndex, setSliceIndex] = useState(0)
   sliceIndexRef.current = sliceIndex
+  compareSliceIndexRef.current = compareSliceIndex
   const [showSliceHighlight, setShowSliceHighlight] = useState(false)
   const [cropBounds, setCropBounds] = useState<CropBounds>(FULL_CROP)
   const [cropEditing, setCropEditing] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [isStageFullscreen, setIsStageFullscreen] = useState(false)
+  const [shortcutSheetOpen, setShortcutSheetOpen] = useState(false)
+  /** Brief 2D crosshair flash after a 3D volume slice pick (token forces re-trigger). */
+  const [slicePickFlash, setSlicePickFlash] = useState<{
+    token: number
+    x: number
+    y: number
+  } | null>(null)
+  const slicePickFlashTokenRef = useRef(0)
 
   const workerBusy = progress.phase === 'scanning' || progress.phase === 'loading'
-  const busy = workerBusy || openingId !== null
+  const busy = workerBusy || openingId !== null || compareOpeningId !== null
   const volumeCropped = cropBounds.minX > 0.001 || cropBounds.maxX < 0.999 ||
     cropBounds.minY > 0.001 || cropBounds.maxY < 0.999 ||
     cropBounds.minZ > 0.001 || cropBounds.maxZ < 0.999
@@ -114,6 +142,19 @@ export default function App() {
     () => [...bundledSeries.map(bundledSeriesSummary), ...series],
     [bundledSeries, series],
   )
+
+  const rememberVolume = useCallback((next: VolumeData) => {
+    volumeCache.current.set(next.seriesId, next)
+  }, [])
+
+  const clearCompare = useCallback(() => {
+    compareOpeningIdRef.current = null
+    setCompareOpeningId(null)
+    setCompareSeriesId(null)
+    setCompareVolume(null)
+    setCompareSliceIndex(0)
+    setCompareSettings(COMPARE_WL_DEFAULT)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -198,7 +239,10 @@ export default function App() {
         // Stale generation (superseded click or user left open intent) — do not force viewer.
         if (generation !== openGenerationRef.current) return
         setVolume(selectedVolume)
+        rememberVolume(selectedVolume)
         setActiveSeriesId(selection.id)
+        // Primary replaced the compare series — drop B so A/B never share the same stack.
+        if (compareSeriesId === selection.id) clearCompare()
         setScreen('viewer')
         if (pushHistory) pushViewerLocation(selection.id)
       } catch (loadError: unknown) {
@@ -219,7 +263,87 @@ export default function App() {
         }
       }
     },
-    [cancelInFlight, pushViewerLocation, setError, setVolume, volume],
+    [cancelInFlight, clearCompare, compareSeriesId, pushViewerLocation, rememberVolume, setError, setVolume, volume],
+  )
+
+  const setCompareSeries = useCallback(
+    async (selection: SeriesSummary) => {
+      if (!selection.supported || selection.id === activeSeriesId) return
+
+      const applyCompareVolume = (next: VolumeData) => {
+        rememberVolume(next)
+        setCompareVolume(next)
+        setCompareSeriesId(next.seriesId)
+        setCompareSettings({
+          window: volumeSettings.window,
+          level: volumeSettings.level,
+        })
+        const primaryDepth = volume?.dimensions[2] ?? next.dimensions[2]
+        const primaryIndex = volume ? sliceIndexRef.current : midSliceIndex(next.dimensions[2])
+        setCompareSliceIndex(
+          slicesLinked
+            ? mapRelativeSliceIndex(primaryIndex, primaryDepth, next.dimensions[2])
+            : midSliceIndex(next.dimensions[2]),
+        )
+        if (viewerLayout !== 'compare') setViewerLayout('compare')
+      }
+
+      const cached = volumeCache.current.get(selection.id)
+      if (cached) {
+        applyCompareVolume(cached)
+        return
+      }
+
+      const included = bundledSeries.find((entry) => entry.id === selection.id)
+      if (included) {
+        const generation = selection.id
+        compareOpeningIdRef.current = generation
+        setCompareOpeningId(generation)
+        setError(null)
+        try {
+          const loaded = await loadBundledVolume(included)
+          if (compareOpeningIdRef.current !== generation) return
+          applyCompareVolume(loaded)
+        } catch (loadError: unknown) {
+          if (compareOpeningIdRef.current !== generation) return
+          setError(
+            loadError instanceof Error
+              ? loadError.message
+              : 'The compare series could not be opened.',
+          )
+        } finally {
+          if (compareOpeningIdRef.current === generation) {
+            compareOpeningIdRef.current = null
+            setCompareOpeningId(null)
+          }
+        }
+        return
+      }
+
+      // Local DICOM: load via worker without replacing the primary volume.
+      compareOpeningIdRef.current = selection.id
+      setCompareOpeningId(selection.id)
+      loadSeries(selection.id, {
+        onVolume: (next) => {
+          if (compareOpeningIdRef.current !== selection.id) return
+          applyCompareVolume(next)
+          compareOpeningIdRef.current = null
+          setCompareOpeningId(null)
+        },
+      })
+    },
+    [
+      activeSeriesId,
+      bundledSeries,
+      loadSeries,
+      rememberVolume,
+      setError,
+      slicesLinked,
+      viewerLayout,
+      volume,
+      volumeSettings.level,
+      volumeSettings.window,
+    ],
   )
 
   useEffect(() => {
@@ -273,12 +397,13 @@ export default function App() {
       if (!files.length) return
       // Drop any in-flight bundled open so a late fetch cannot overwrite this local intent.
       cancelPendingOpen()
+      clearCompare()
       setActiveSeriesId(null)
       setScreen('viewer')
       window.history.pushState({ screen: 'viewer', local: true }, '', '#local')
       scanFiles(files)
     },
-    [cancelPendingOpen, scanFiles],
+    [cancelPendingOpen, clearCompare, scanFiles],
   )
 
   const openFolder = useCallback(async () => {
@@ -300,6 +425,7 @@ export default function App() {
       return
     }
     setActiveSeriesId(selection.id)
+    if (compareSeriesId === selection.id) clearCompare()
     setScreen('viewer')
     pushViewerLocation(selection.id)
     loadSeries(selection.id)
@@ -307,29 +433,95 @@ export default function App() {
 
   const showDemo = () => {
     setActiveSeriesId('demo-phantom')
-    setVolume(createDemoVolume())
+    clearCompare()
+    const demo = createDemoVolume()
+    setVolume(demo)
+    rememberVolume(demo)
   }
+
+  const compareVolumeRef = useRef(compareVolume)
+  compareVolumeRef.current = compareVolume
+  const slicesLinkedRef = useRef(slicesLinked)
+  slicesLinkedRef.current = slicesLinked
 
   useEffect(() => {
     if (!volume) {
       previousDepthRef.current = null
       return
     }
+    rememberVolume(volume)
     const nextDepth = volume.dimensions[2]
     const previousDepth = previousDepthRef.current
+    let nextSlice: number
     if (previousDepth != null && previousDepth > 0) {
-      setSliceIndex(mapRelativeSliceIndex(sliceIndexRef.current, previousDepth, nextDepth))
+      nextSlice = mapRelativeSliceIndex(sliceIndexRef.current, previousDepth, nextDepth)
     } else {
-      setSliceIndex(midSliceIndex(nextDepth))
+      nextSlice = midSliceIndex(nextDepth)
     }
+    setSliceIndex(nextSlice)
     previousDepthRef.current = nextDepth
     setCropBounds(FULL_CROP)
     setCropEditing(false)
-  }, [volume])
+    // Keep pane B aligned when primary series hops and slices are linked.
+    const secondary = compareVolumeRef.current
+    if (slicesLinkedRef.current && secondary) {
+      setCompareSliceIndex(
+        mapRelativeSliceIndex(nextSlice, nextDepth, secondary.dimensions[2]),
+      )
+    }
+  }, [rememberVolume, volume])
+
+  // Local compare load failures clear the worker handler but not this UI busy flag.
+  useEffect(() => {
+    if (progress.phase === 'error' && compareOpeningId) {
+      compareOpeningIdRef.current = null
+      setCompareOpeningId(null)
+    }
+  }, [compareOpeningId, progress.phase])
+
+  const setPrimarySliceIndex = useCallback(
+    (index: number) => {
+      if (!volume) return
+      const depth = volume.dimensions[2]
+      const next = Math.max(0, Math.min(depth - 1, index))
+      setSliceIndex(next)
+      if (slicesLinked && compareVolume) {
+        setCompareSliceIndex(
+          mapRelativeSliceIndex(next, depth, compareVolume.dimensions[2]),
+        )
+      }
+    },
+    [compareVolume, slicesLinked, volume],
+  )
+
+  const setSecondarySliceIndex = useCallback(
+    (index: number) => {
+      if (!compareVolume) return
+      const depth = compareVolume.dimensions[2]
+      const next = Math.max(0, Math.min(depth - 1, index))
+      setCompareSliceIndex(next)
+      if (slicesLinked && volume) {
+        setSliceIndex(mapRelativeSliceIndex(next, depth, volume.dimensions[2]))
+      }
+    },
+    [compareVolume, slicesLinked, volume],
+  )
 
   useEffect(() => {
     if (cropEditing) setAutoRotate(false)
   }, [cropEditing])
+
+  const slicePickEnabled = showSliceHighlight || viewerLayout === 'split'
+
+  const handleVolumeSlicePick = useCallback((pick: VolumeSlicePick) => {
+    setSliceIndex(pick.sliceIndex)
+    slicePickFlashTokenRef.current += 1
+    setSlicePickFlash({
+      token: slicePickFlashTokenRef.current,
+      x: pick.x,
+      y: pick.y,
+    })
+  }, [])
 
   const toggleStageFullscreen = useCallback(() => {
     if (isStageFullscreen) {
@@ -364,13 +556,37 @@ export default function App() {
   }, [screen])
 
   const captureActiveView = useCallback(() => {
-    if (viewerLayout === 'slice') sliceViewerRef.current?.capture()
+    if (viewerLayout === 'slice' || viewerLayout === 'compare') sliceViewerRef.current?.capture()
     else viewerRef.current?.capture()
   }, [viewerLayout])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLButtonElement) return
+      const target = event.target
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return
+      }
+
+      // Discoverability sheet: toggle on ?, dismiss on Esc. Works even when a
+      // toolbar button is focused so the Help control can be keyboard-driven.
+      if (event.key === '?') {
+        event.preventDefault()
+        setShortcutSheetOpen((open) => !open)
+        return
+      }
+      if (event.key === 'Escape' && shortcutSheetOpen) {
+        event.preventDefault()
+        setShortcutSheetOpen(false)
+        return
+      }
+      if (shortcutSheetOpen) return
+
+      if (target instanceof HTMLButtonElement) return
       if (event.key.toLowerCase() === 'r') viewerRef.current?.resetView()
       if (event.key.toLowerCase() === 'f') toggleStageFullscreen()
       if (event.key.toLowerCase() === 's') captureActiveView()
@@ -381,8 +597,30 @@ export default function App() {
       if (event.key === '1') setViewerLayout('volume')
       if (event.key === '2') setViewerLayout('slice')
       if (event.key === '3') setViewerLayout('split')
+      if (event.key === '4') setViewerLayout('compare')
+      // Space toggles cine when a SliceViewer is mounted (2D / split / compare).
+      if (
+        event.key === ' ' &&
+        (viewerLayout === 'slice' || viewerLayout === 'split' || viewerLayout === 'compare')
+      ) {
+        event.preventDefault()
+        sliceViewerRef.current?.toggleCine()
+      }
       if (volume) {
         const depth = volume.dimensions[2]
+        if (event.key === 'Home') {
+          event.preventDefault()
+          // Match step/slider: user slice jumps pause cine.
+          sliceViewerRef.current?.pauseCine()
+          setPrimarySliceIndex(0)
+          return
+        }
+        if (event.key === 'End') {
+          event.preventDefault()
+          sliceViewerRef.current?.pauseCine()
+          setPrimarySliceIndex(Math.max(0, depth - 1))
+          return
+        }
         const step =
           event.key === 'ArrowUp' || event.key === ','
             ? -1
@@ -391,13 +629,13 @@ export default function App() {
               : 0
         if (step !== 0) {
           event.preventDefault()
-          setSliceIndex((current) => Math.max(0, Math.min(depth - 1, current + step)))
+          setPrimarySliceIndex(sliceIndexRef.current + step)
         }
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [captureActiveView, goHome, isStageFullscreen, toggleStageFullscreen, volume])
+  }, [captureActiveView, goHome, isStageFullscreen, setPrimarySliceIndex, shortcutSheetOpen, toggleStageFullscreen, viewerLayout, volume])
 
   const onDrop = async (event: React.DragEvent) => {
     event.preventDefault()
@@ -471,8 +709,10 @@ export default function App() {
           <SeriesPanel
             series={displaySeries}
             activeId={activeSeriesId}
+            compareId={compareSeriesId}
             busy={busy}
             onSelect={selectSeries}
+            onSetCompare={(selection) => void setCompareSeries(selection)}
             onOpen={openFolder}
           />
 
@@ -511,9 +751,72 @@ export default function App() {
                     >
                       <Columns2 size={15} /> Split <kbd>3</kbd>
                     </button>
+                    <button
+                      className={viewerLayout === 'compare' ? 'active' : ''}
+                      type="button"
+                      role="tab"
+                      aria-selected={viewerLayout === 'compare'}
+                      onClick={() => setViewerLayout('compare')}
+                    >
+                      <SquareSplitHorizontal size={15} /> Compare <kbd>4</kbd>
+                    </button>
                   </div>
                   <div className="tool-actions">
-                    {viewerLayout !== 'slice' ? (
+                    <button
+                      className={shortcutSheetOpen ? 'icon-button active' : 'icon-button'}
+                      type="button"
+                      aria-label="Keyboard shortcuts"
+                      aria-haspopup="dialog"
+                      aria-expanded={shortcutSheetOpen}
+                      title="Keyboard shortcuts (?)"
+                      data-testid="shortcut-help-button"
+                      onClick={() => setShortcutSheetOpen((open) => !open)}
+                    >
+                      <CircleHelp size={16} />
+                    </button>
+                    {viewerLayout === 'compare' ? (
+                      <>
+                        <button
+                          className={slicesLinked ? 'slice-link-toggle active' : 'slice-link-toggle'}
+                          type="button"
+                          aria-pressed={slicesLinked}
+                          aria-label={slicesLinked ? 'Unlock linked slices' : 'Link slices by relative depth'}
+                          title={slicesLinked
+                            ? 'Slices linked by relative depth — click to unlock'
+                            : 'Slices independent — click to link by relative depth'}
+                          onClick={() => {
+                            setSlicesLinked((linked) => {
+                              const next = !linked
+                              if (next && volume && compareVolume) {
+                                setCompareSliceIndex(
+                                  mapRelativeSliceIndex(
+                                    sliceIndexRef.current,
+                                    volume.dimensions[2],
+                                    compareVolume.dimensions[2],
+                                  ),
+                                )
+                              }
+                              return next
+                            })
+                          }}
+                        >
+                          {slicesLinked ? <Link2 size={14} /> : <Link2Off size={14} />}
+                          <span>{slicesLinked ? 'Linked' : 'Unlocked'}</span>
+                        </button>
+                        {compareSeriesId ? (
+                          <button
+                            className="icon-button"
+                            type="button"
+                            title="Clear compare pane B"
+                            aria-label="Clear compare pane B"
+                            onClick={clearCompare}
+                          >
+                            <RotateCcw size={15} />
+                          </button>
+                        ) : null}
+                      </>
+                    ) : null}
+                    {viewerLayout !== 'slice' && viewerLayout !== 'compare' ? (
                       <>
                         <button
                           className={cropEditing ? 'crop-box-toggle active' : 'crop-box-toggle'}
@@ -572,83 +875,147 @@ export default function App() {
                 </div>
 
                 <div className={`stage-view-grid layout-${viewerLayout}`}>
-                  {viewerLayout !== 'slice' ? (
-                    <section
-                      className="viewer-stage-pane"
-                      aria-label="3D volume view"
-                      data-reconstruction-status={reconstruction.status}
-                      data-reconstruction-mode={reconstructionEnabled ? 'enhanced' : 'acquired'}
-                      data-camera-projection={cameraProjection}
-                      data-crop-editing={cropEditing}
-                      data-reconstructed-depth={reconstructionEnabled && reconstruction.volume?.seriesId === volume.seriesId
-                        ? reconstruction.volume.dimensions[2]
-                        : volume.dimensions[2]}
-                      data-synthetic-slices={reconstruction.volume?.seriesId === volume.seriesId
-                        ? reconstruction.volume.syntheticSlices
-                        : 0}
-                    >
-                      <Suspense fallback={<div className="viewer-loading">Initializing GPU renderer…</div>}>
-                        <ViewerStage
-                          ref={viewerRef}
-                          volume={volume}
-                          reconstruction={reconstructionEnabled ? reconstruction.volume : null}
-                          projection={cameraProjection}
-                          volumeSettings={volumeSettings}
-                          autoRotate={autoRotate}
-                          sliceIndex={sliceIndex}
-                          showSliceHighlight={showSliceHighlight}
-                          cropBounds={cropBounds}
-                          cropEditing={cropEditing}
-                          onCropChange={setCropBounds}
+                  {viewerLayout === 'compare' ? (
+                    <>
+                      <SliceViewer
+                        ref={sliceViewerRef}
+                        volume={volume}
+                        sliceIndex={sliceIndex}
+                        onSliceChange={setPrimarySliceIndex}
+                        volumeSettings={volumeSettings}
+                        onVolumeSettingsChange={(patch) => setVolumeSettings((current) => ({ ...current, ...patch }))}
+                        cropBounds={cropBounds}
+                        onCropChange={setCropBounds}
+                        cropEditing={false}
+                        onCropEditingChange={() => undefined}
+                        viewerLayout={viewerLayout}
+                        paneLabel="A"
+                        hideCropControls
+                      />
+                      {compareVolume ? (
+                        <SliceViewer
+                          ref={compareSliceViewerRef}
+                          volume={compareVolume}
+                          sliceIndex={compareSliceIndex}
+                          onSliceChange={setSecondarySliceIndex}
+                          volumeSettings={{ ...volumeSettings, ...compareSettings }}
+                          onVolumeSettingsChange={(patch) => {
+                            if (patch.window !== undefined || patch.level !== undefined) {
+                              setCompareSettings((current) => ({
+                                window: patch.window ?? current.window,
+                                level: patch.level ?? current.level,
+                              }))
+                            }
+                          }}
+                          cropBounds={FULL_CROP}
+                          onCropChange={() => undefined}
+                          cropEditing={false}
+                          onCropEditingChange={() => undefined}
+                          viewerLayout={viewerLayout}
+                          paneLabel="B"
+                          hideCropControls
                         />
-                      </Suspense>
-                      <div className="volume-hud top-left">
-                        <span className="hud-kicker">
-                          {reconstructionEnabled ? 'Enhanced reconstruction' : 'Acquired stack'}
-                        </span>
-                        <b>{volume.description}</b>
-                        <small>
-                          {volume.orientation} · {volume.dimensions.join(' × ')} acquired
-                          {reconstructionEnabled && reconstruction.volume?.seriesId === volume.seriesId
-                            ? ` · +${reconstruction.volume.syntheticSlices} synthetic · ${reconstruction.volume.dimensions[2]} reconstructed planes`
-                            : reconstruction.volume?.seriesId === volume.seriesId
-                              ? ` · ${reconstruction.volume.syntheticSlices} synthetic available`
-                              : ''}
-                        </small>
-                      </div>
-                      <div className="volume-hud bottom-left">
-                        <MousePointer2 size={14} /><span>Drag to orbit</span><i /><span>Scroll to zoom</span>
-                      </div>
-                      <div className="render-stats">
-                        <span>
-                          <Cpu size={13} />
-                          {reconstructionEnabled && reconstruction.volume?.seriesId === volume.seriesId
-                            ? 'SHAPE RECON'
-                            : 'ACQUIRED'}
-                        </span>
-                        <b>
-                          {reconstructionEnabled && reconstruction.volume?.seriesId === volume.seriesId
-                            ? `${volume.dimensions[2]} + ${reconstruction.volume.syntheticSlices} synth`
-                            : `${volume.sliceCount} layers`}
-                        </b>
-                      </div>
-                    </section>
-                  ) : null}
-                  {viewerLayout !== 'volume' ? (
-                    <SliceViewer
-                      ref={sliceViewerRef}
-                      volume={volume}
-                      sliceIndex={sliceIndex}
-                      onSliceChange={setSliceIndex}
-                      volumeSettings={volumeSettings}
-                      onVolumeSettingsChange={(patch) => setVolumeSettings((current) => ({ ...current, ...patch }))}
-                      cropBounds={cropBounds}
-                      onCropChange={setCropBounds}
-                      cropEditing={cropEditing}
-                      onCropEditingChange={setCropEditing}
-                      viewerLayout={viewerLayout}
-                    />
-                  ) : null}
+                      ) : (
+                        <div className="compare-empty-pane" role="status">
+                          <SquareSplitHorizontal size={28} />
+                          <b>Pane B</b>
+                          <p>
+                            {compareOpeningId
+                              ? 'Loading compare series…'
+                              : 'Alt-click a series in the list, or press B on a card, to pair a second sequence.'}
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {viewerLayout !== 'slice' ? (
+                        <section
+                          className="viewer-stage-pane"
+                          aria-label="3D volume view"
+                          data-reconstruction-status={reconstruction.status}
+                          data-reconstruction-mode={reconstructionEnabled ? 'enhanced' : 'acquired'}
+                          data-camera-projection={cameraProjection}
+                          data-crop-editing={cropEditing}
+                          data-reconstructed-depth={reconstructionEnabled && reconstruction.volume?.seriesId === volume.seriesId
+                            ? reconstruction.volume.dimensions[2]
+                            : volume.dimensions[2]}
+                          data-synthetic-slices={reconstruction.volume?.seriesId === volume.seriesId
+                            ? reconstruction.volume.syntheticSlices
+                            : 0}
+                        >
+                          <Suspense fallback={<div className="viewer-loading">Initializing GPU renderer…</div>}>
+                            <ViewerStage
+                              ref={viewerRef}
+                              volume={volume}
+                              reconstruction={reconstructionEnabled ? reconstruction.volume : null}
+                              projection={cameraProjection}
+                              volumeSettings={volumeSettings}
+                              autoRotate={autoRotate}
+                              sliceIndex={sliceIndex}
+                              showSliceHighlight={showSliceHighlight}
+                              cropBounds={cropBounds}
+                              cropEditing={cropEditing}
+                              onCropChange={setCropBounds}
+                              slicePickEnabled={slicePickEnabled}
+                              onSlicePick={handleVolumeSlicePick}
+                            />
+                          </Suspense>
+                          <div className="volume-hud top-left">
+                            <span className="hud-kicker">
+                              {reconstructionEnabled ? 'Enhanced reconstruction' : 'Acquired stack'}
+                            </span>
+                            <b>{volume.description}</b>
+                            <small>
+                              {volume.orientation} · {volume.dimensions.join(' × ')} acquired
+                              {reconstructionEnabled && reconstruction.volume?.seriesId === volume.seriesId
+                                ? ` · +${reconstruction.volume.syntheticSlices} synthetic · ${reconstruction.volume.dimensions[2]} reconstructed planes`
+                                : reconstruction.volume?.seriesId === volume.seriesId
+                                  ? ` · ${reconstruction.volume.syntheticSlices} synthetic available`
+                                  : ''}
+                            </small>
+                          </div>
+                          <div className="volume-hud bottom-left">
+                            <MousePointer2 size={14} /><span>Drag to orbit</span><i /><span>Scroll to zoom</span>
+                            {slicePickEnabled ? (
+                              <>
+                                <i /><span>Alt+click → 2D slice</span>
+                              </>
+                            ) : null}
+                          </div>
+                          <div className="render-stats">
+                            <span>
+                              <Cpu size={13} />
+                              {reconstructionEnabled && reconstruction.volume?.seriesId === volume.seriesId
+                                ? 'SHAPE RECON'
+                                : 'ACQUIRED'}
+                            </span>
+                            <b>
+                              {reconstructionEnabled && reconstruction.volume?.seriesId === volume.seriesId
+                                ? `${volume.dimensions[2]} + ${reconstruction.volume.syntheticSlices} synth`
+                                : `${volume.sliceCount} layers`}
+                            </b>
+                          </div>
+                        </section>
+                      ) : null}
+                      {viewerLayout !== 'volume' ? (
+                        <SliceViewer
+                          ref={sliceViewerRef}
+                          volume={volume}
+                          sliceIndex={sliceIndex}
+                          onSliceChange={setPrimarySliceIndex}
+                          volumeSettings={volumeSettings}
+                          onVolumeSettingsChange={(patch) => setVolumeSettings((current) => ({ ...current, ...patch }))}
+                          cropBounds={cropBounds}
+                          onCropChange={setCropBounds}
+                          cropEditing={cropEditing}
+                          onCropEditingChange={setCropEditing}
+                          viewerLayout={viewerLayout}
+                          pickFlash={slicePickFlash}
+                        />
+                      ) : null}
+                    </>
+                  )}
                 </div>
 
                 {error ? (
@@ -657,25 +1024,33 @@ export default function App() {
                   </div>
                 ) : null}
 
-                {busy || (reconstruction.status === 'processing' && viewerLayout !== 'slice') ? (
+                {busy || (reconstruction.status === 'processing' && viewerLayout !== 'slice' && viewerLayout !== 'compare') ? (
                   <div className="stage-progress" role="status">
                     <div>
                       <span>
                         {reconstruction.status === 'processing' && !busy
                           ? reconstruction.message
-                          : openingId ? 'Loading included volume' : progress.label}
+                          : compareOpeningId
+                            ? 'Loading compare series'
+                            : openingId
+                              ? 'Loading included volume'
+                              : progress.label}
                       </span>
                       <b>
                         {reconstruction.status === 'processing' && !busy
                           ? `${Math.round(reconstruction.progress * 100)}%`
-                          : openingId ? '…' : `${Math.round(progress.progress * 100)}%`}
+                          : openingId || compareOpeningId
+                            ? '…'
+                            : `${Math.round(progress.progress * 100)}%`}
                       </b>
                     </div>
                     <i>
                       <span style={{
                         width: reconstruction.status === 'processing' && !busy
                           ? `${reconstruction.progress * 100}%`
-                          : openingId ? '65%' : `${progress.progress * 100}%`,
+                          : openingId || compareOpeningId
+                            ? '65%'
+                            : `${progress.progress * 100}%`,
                       }} />
                     </i>
                   </div>
@@ -718,6 +1093,8 @@ export default function App() {
           {busy ? progress.label : error || progress.phase === 'error' ? progress.label || error : 'Renderer ready'}
         </span>
       </footer>
+
+      <ShortcutSheet open={shortcutSheetOpen} onClose={() => setShortcutSheetOpen(false)} />
     </div>
   )
 }
