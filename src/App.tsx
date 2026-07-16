@@ -77,6 +77,8 @@ export default function App() {
   /** Through-plane depth of the last applied volume; null means no prior slice context. */
   const previousDepthRef = useRef<number | null>(null)
   const sliceIndexRef = useRef(0)
+  /** Sync guard so cancel + re-open in the same tick is not blocked by stale openingId state. */
+  const openingIdRef = useRef<string | null>(null)
   const { series, volume, setVolume, progress, error, setError, scanFiles, loadSeries } = useDicomLoader()
   const reconstruction = useVolumeReconstruction(volume)
   const [screen, setScreen] = useState<Screen>('library')
@@ -168,10 +170,17 @@ export default function App() {
     window.history.pushState({ screen: 'viewer', seriesId: id }, '', `#series/${id}`)
   }, [])
 
+  const cancelPendingOpen = useCallback(() => {
+    openGenerationRef.current += 1
+    openingIdRef.current = null
+    setOpeningId(null)
+  }, [])
+
   const openBundledSeries = useCallback(
     async (selection: BundledSeries, pushHistory = true) => {
       // Latest click wins: bump generation so an in-flight open cannot apply after a newer one.
       const generation = ++openGenerationRef.current
+      openingIdRef.current = selection.id
       setCatalogError(null)
       setError(null)
       setOpeningId(selection.id)
@@ -179,9 +188,10 @@ export default function App() {
         let selectedVolume = volumeCache.current.get(selection.id)
         if (!selectedVolume) {
           selectedVolume = await loadBundledVolume(selection)
-          // Cache even if superseded so a later open of the same series is free.
+          // Cache even if superseded/cancelled so a later open of the same series is free.
           volumeCache.current.set(selection.id, selectedVolume)
         }
+        // Stale generation (superseded click or user left open intent) — do not force viewer.
         if (generation !== openGenerationRef.current) return
         setVolume(selectedVolume)
         setActiveSeriesId(selection.id)
@@ -200,6 +210,7 @@ export default function App() {
         }
       } finally {
         if (generation === openGenerationRef.current) {
+          openingIdRef.current = null
           setOpeningId(null)
         }
       }
@@ -210,20 +221,29 @@ export default function App() {
   useEffect(() => {
     const navigateFromHistory = () => {
       if (window.location.hash === '#local') {
+        cancelPendingOpen()
         setScreen('viewer')
         return
       }
       const match = window.location.hash.match(/^#series\/(.+)$/)
       if (!match) {
+        // Browser Back to library while a bundled open is in flight.
+        cancelPendingOpen()
         setScreen('library')
         return
       }
       const id = decodeURIComponent(match[1])
       const included = bundledSeries.find((entry) => entry.id === id)
-      if (included) void openBundledSeries(included, false)
-      else {
+      if (included) {
+        // Already loading this series — leave the in-flight open alone.
+        if (openingIdRef.current === included.id) return
+        // Different series (or idle): drop any pending open so history can win.
+        cancelPendingOpen()
+        void openBundledSeries(included, false)
+      } else {
         const local = series.find((entry) => entry.id === id)
         if (local) {
+          cancelPendingOpen()
           setActiveSeriesId(local.id)
           setScreen('viewer')
           loadSeries(local.id)
@@ -233,25 +253,28 @@ export default function App() {
     window.addEventListener('popstate', navigateFromHistory)
     if (bundledSeries.length && window.location.hash) navigateFromHistory()
     return () => window.removeEventListener('popstate', navigateFromHistory)
-  }, [bundledSeries, loadSeries, openBundledSeries, series])
+  }, [bundledSeries, cancelPendingOpen, loadSeries, openBundledSeries, series])
 
   const goHome = useCallback((pushHistory = true) => {
+    cancelPendingOpen()
     setScreen('library')
     setAutoRotate(false)
     if (pushHistory) {
       window.history.pushState({ screen: 'library' }, '', `${window.location.pathname}${window.location.search}`)
     }
-  }, [])
+  }, [cancelPendingOpen])
 
   const handleFiles = useCallback(
     (files: File[]) => {
       if (!files.length) return
+      // Drop any in-flight bundled open so a late fetch cannot overwrite this local intent.
+      cancelPendingOpen()
       setActiveSeriesId(null)
       setScreen('viewer')
       window.history.pushState({ screen: 'viewer', local: true }, '', '#local')
       scanFiles(files)
     },
-    [scanFiles],
+    [cancelPendingOpen, scanFiles],
   )
 
   const openFolder = useCallback(async () => {
