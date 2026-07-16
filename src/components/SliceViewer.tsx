@@ -229,6 +229,19 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
           const visible = measurementDraft?.slice === safeIndex
             ? [...current, measurementDraft]
             : current
+          const showScalar =
+            Math.abs(volume.scalarRange[1] - volume.scalarRange[0] - 255) > 1
+            || Math.abs(volume.scalarRange[0]) > 0.5
+          const pins = pinnedProbes
+            .filter((probe) => probe.slice === safeIndex)
+            .map((probe) => ({
+              x: probe.x,
+              y: probe.y,
+              intensityLabel: showScalar
+                ? `I ${probe.sample.intensity} · ${formatProbeScalar(probe.sample.scalar)}`
+                : `I ${probe.sample.intensity}`,
+              coordsLabel: `c ${probe.sample.col} · r ${probe.sample.row}`,
+            }))
           const link = document.createElement('a')
           link.download = `lumen-${volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-slice-${safeIndex + 1}.png`
           link.href = compositeAnnotatedSlicePng({
@@ -246,6 +259,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
               end: measurement.end,
               label: measurementSummary(measurement, volume, width, height),
             })),
+            pinnedProbes: pins,
           })
           link.click()
         },
@@ -256,6 +270,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         labels,
         measurementDraft,
         measurements,
+        pinnedProbes,
         safeIndex,
         volume,
         volumeSettings.level,

@@ -13,6 +13,16 @@ export interface CaptureMeasurement {
   label: string
 }
 
+/** Normalized (0–1) pin with labels already formatted for the live pin overlay. */
+export interface CapturePinnedProbe {
+  x: number
+  y: number
+  /** e.g. "I 128" or "I 128 · 1024" */
+  intensityLabel: string
+  /** e.g. "c 42 · r 17" */
+  coordsLabel: string
+}
+
 export interface CaptureOrientationLabels {
   top: string
   right: string
@@ -28,6 +38,8 @@ export interface AnnotatedSliceCaptureInput {
   window: number
   level: number
   measurements: CaptureMeasurement[]
+  /** Current-slice pins only; omitted or empty skips drawing. */
+  pinnedProbes?: CapturePinnedProbe[]
   labels: CaptureOrientationLabels
 }
 
@@ -52,6 +64,11 @@ const MARKER_BG = 'rgba(4, 12, 17, 0.78)'
 const META_DIM = '#718991'
 const META_ACCENT = '#52cfe5'
 const META_MUTED = '#4d626a'
+const PROBE_STROKE = 'rgba(126, 245, 196, 0.95)'
+const PROBE_LABEL_BG = 'rgba(2, 10, 8, 0.86)'
+const PROBE_LABEL_BORDER = 'rgba(110, 240, 190, 0.4)'
+const PROBE_LABEL_TEXT = '#e8fff6'
+const PROBE_COORDS_TEXT = '#8ebfad'
 
 function roundRect(
   ctx: CanvasRenderingContext2D,
@@ -123,6 +140,82 @@ function drawOrientationMarker(
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillText(text, x, y + 0.5)
+  ctx.restore()
+}
+
+/**
+ * Draw a pinned intensity probe: mint crosshair + circle, label offset to the right
+ * (parity with live `.pixel-probe-pin` / `.pixel-probe-cross` / `.pixel-probe-pin-label`).
+ */
+function drawPinnedProbe(
+  ctx: CanvasRenderingContext2D,
+  probe: CapturePinnedProbe,
+  width: number,
+  height: number,
+  scale: number,
+) {
+  const cx = probe.x * width
+  const cy = probe.y * height
+  const arm = Math.max(7, 9 * scale)
+  const ringR = Math.max(5, 6 * scale)
+  const stroke = Math.max(1, 1 * scale)
+
+  ctx.save()
+  ctx.strokeStyle = PROBE_STROKE
+  ctx.fillStyle = PROBE_STROKE
+  ctx.lineWidth = stroke
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.45)'
+  ctx.shadowBlur = 1 * scale
+
+  // Crosshair arms
+  ctx.beginPath()
+  ctx.moveTo(cx, cy - arm)
+  ctx.lineTo(cx, cy + arm)
+  ctx.moveTo(cx - arm, cy)
+  ctx.lineTo(cx + arm, cy)
+  ctx.stroke()
+
+  // Center ring
+  ctx.beginPath()
+  ctx.arc(cx, cy, ringR, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.shadowBlur = 0
+
+  // Label box (to the right / slightly above, like live pin)
+  const intensityFont = Math.max(8, Math.round(9 * scale))
+  const coordsFont = Math.max(7, Math.round(8 * scale))
+  const padX = Math.max(4, 6 * scale)
+  const padY = Math.max(3, 4 * scale)
+  const gap = Math.max(1, 1 * scale)
+
+  ctx.font = `${intensityFont}px "DM Mono", ui-monospace, monospace`
+  const intensityW = ctx.measureText(probe.intensityLabel).width
+  ctx.font = `${coordsFont}px "DM Mono", ui-monospace, monospace`
+  const coordsW = ctx.measureText(probe.coordsLabel).width
+  const boxW = Math.max(intensityW, coordsW) + padX * 2
+  const boxH = intensityFont + coordsFont + gap + padY * 2
+  let boxX = cx + Math.max(8, 10 * scale)
+  let boxY = cy - Math.max(3, 4 * scale)
+  // Keep label on-canvas
+  if (boxX + boxW > width - 2) boxX = Math.max(2, cx - boxW - Math.max(8, 10 * scale))
+  if (boxY + boxH > height - 2) boxY = Math.max(2, height - boxH - 2)
+  if (boxY < 2) boxY = 2
+
+  ctx.fillStyle = PROBE_LABEL_BG
+  ctx.strokeStyle = PROBE_LABEL_BORDER
+  ctx.lineWidth = Math.max(1, 0.75 * scale)
+  roundRect(ctx, boxX, boxY, boxW, boxH, Math.max(2, 4 * scale))
+  ctx.fill()
+  ctx.stroke()
+
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'top'
+  ctx.fillStyle = PROBE_LABEL_TEXT
+  ctx.font = `${intensityFont}px "DM Mono", ui-monospace, monospace`
+  ctx.fillText(probe.intensityLabel, boxX + padX, boxY + padY)
+  ctx.fillStyle = PROBE_COORDS_TEXT
+  ctx.font = `${coordsFont}px "DM Mono", ui-monospace, monospace`
+  ctx.fillText(probe.coordsLabel, boxX + padX, boxY + padY + intensityFont + gap)
   ctx.restore()
 }
 
@@ -198,8 +291,9 @@ function drawVolumeMetadataStrip(
 }
 
 /**
- * Composite the intensity canvas with measurement overlays, orientation markers,
- * and a thin metadata strip into a PNG data URL.
+ * Composite the intensity canvas with measurement overlays, pinned probes,
+ * orientation markers, and a thin metadata strip into a PNG data URL.
+ * Pins are never on the bare source canvas — only this composite path.
  */
 export function compositeAnnotatedSlicePng(input: AnnotatedSliceCaptureInput): string {
   const { source } = input
@@ -291,6 +385,10 @@ export function compositeAnnotatedSlicePng(input: AnnotatedSliceCaptureInput): s
         labelFont,
       )
     }
+  }
+
+  for (const probe of input.pinnedProbes ?? []) {
+    drawPinnedProbe(ctx, probe, width, height, scale)
   }
 
   const markerSize = Math.max(16, Math.round(20 * scale))
