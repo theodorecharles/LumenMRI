@@ -75,7 +75,7 @@ export default function App() {
   /** Through-plane depth of the last applied volume; null means no prior slice context. */
   const previousDepthRef = useRef<number | null>(null)
   const sliceIndexRef = useRef(0)
-  const { series, volume, setVolume, progress, error, scanFiles, loadSeries } = useDicomLoader()
+  const { series, volume, setVolume, progress, error, setError, scanFiles, loadSeries } = useDicomLoader()
   const reconstruction = useVolumeReconstruction(volume)
   const [screen, setScreen] = useState<Screen>('library')
   const [catalog, setCatalog] = useState<BundledCatalog | null>(null)
@@ -170,6 +170,7 @@ export default function App() {
     async (selection: BundledSeries, pushHistory = true) => {
       if (openingId) return
       setCatalogError(null)
+      setError(null)
       setOpeningId(selection.id)
       try {
         let selectedVolume = volumeCache.current.get(selection.id)
@@ -182,15 +183,20 @@ export default function App() {
         setScreen('viewer')
         if (pushHistory) pushViewerLocation(selection.id)
       } catch (loadError: unknown) {
-        setCatalogError(
-          loadError instanceof Error ? loadError.message : 'The selected volume could not be opened.',
-        )
-        setScreen('library')
+        const message =
+          loadError instanceof Error ? loadError.message : 'The selected volume could not be opened.'
+        // Keep a valid prior volume on the viewer; library-only fallback when nothing is loaded.
+        if (volume) {
+          setError(message)
+        } else {
+          setCatalogError(message)
+          setScreen('library')
+        }
       } finally {
         setOpeningId(null)
       }
     },
-    [openingId, pushViewerLocation, setVolume],
+    [openingId, pushViewerLocation, setError, setVolume, volume],
   )
 
   useEffect(() => {
