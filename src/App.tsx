@@ -72,6 +72,8 @@ export default function App() {
   const sliceViewerRef = useRef<SliceViewerHandle>(null)
   const stageRef = useRef<HTMLElement>(null)
   const volumeCache = useRef(new Map<string, VolumeData>())
+  /** Bumps on each bundled open so a later click can supersede an in-flight load. */
+  const openGenerationRef = useRef(0)
   /** Through-plane depth of the last applied volume; null means no prior slice context. */
   const previousDepthRef = useRef<number | null>(null)
   const sliceIndexRef = useRef(0)
@@ -168,29 +170,35 @@ export default function App() {
 
   const openBundledSeries = useCallback(
     async (selection: BundledSeries, pushHistory = true) => {
-      if (openingId) return
+      // Latest click wins: bump generation so an in-flight open cannot apply after a newer one.
+      const generation = ++openGenerationRef.current
       setCatalogError(null)
       setOpeningId(selection.id)
       try {
         let selectedVolume = volumeCache.current.get(selection.id)
         if (!selectedVolume) {
           selectedVolume = await loadBundledVolume(selection)
+          // Cache even if superseded so a later open of the same series is free.
           volumeCache.current.set(selection.id, selectedVolume)
         }
+        if (generation !== openGenerationRef.current) return
         setVolume(selectedVolume)
         setActiveSeriesId(selection.id)
         setScreen('viewer')
         if (pushHistory) pushViewerLocation(selection.id)
       } catch (loadError: unknown) {
+        if (generation !== openGenerationRef.current) return
         setCatalogError(
           loadError instanceof Error ? loadError.message : 'The selected volume could not be opened.',
         )
         setScreen('library')
       } finally {
-        setOpeningId(null)
+        if (generation === openGenerationRef.current) {
+          setOpeningId(null)
+        }
       }
     },
-    [openingId, pushViewerLocation, setVolume],
+    [pushViewerLocation, setVolume],
   )
 
   useEffect(() => {
