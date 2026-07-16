@@ -25,7 +25,7 @@ The homepage opens to the included scan library. Choose **Open scan** to inspect
 - Shape-aware, bidirectionally registered synthetic slices generated in a background worker for seamless through-plane reconstruction with preserved acquired images and sharpened anatomical boundaries
 - Diagnostic-style 2D slice canvas with orientation markers, layer position, window/level, slider, buttons, and scroll navigation
 - Physical distance rulers in millimeters plus rectangular ROI measurements with area and mean signal, stored independently on each slice
-- Linked 2D/3D split view with an optional highlighted slice plane
+- Linked 2D/3D split view with an optional highlighted slice plane; Alt+click the 3D volume (when Slice plane is on, or always in Split) to jump the 2D stack to that depth
 - Instant Enhanced/Acquired 3D comparison, true orthographic isometric projection, and a clickable A/P/L/R/S/I anatomical view cube
 - Shared six-face crop volume with live cross-section textures, projected face handles, whole-box translation, two-sided depth cropping, a synchronized 2D ROI, and automatic recentering
 - 90° dataset rotations and axial, side, top, and perspective camera presets
@@ -59,6 +59,7 @@ Press `?` in the viewer (or the Help control in the stage toolbar) for the full 
 - `↓` / `.`: next slice
 - `Home` / `End`: first / last slice (pauses cine)
 - `Space`: toggle cine play (2D and split layouts)
+- `Alt`+click (3D): set linked 2D slice from volume pick (Slice plane on, or Split layout)
 - `R`: reset 3D view
 - `F`: fullscreen workspace
 - `S`: save the active rendering

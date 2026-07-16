@@ -25,6 +25,39 @@ export function midSliceIndex(depth: number): number {
 }
 
 /**
+ * Map a unit stack fraction (0 = first slice, 1 = last) to a clamped index.
+ * Matches the 3D slice-plane placement: z = (index / (depth - 1) - 0.5) * sizeZ.
+ */
+export function sliceIndexFromStackFraction(fraction: number, depth: number): number {
+  if (depth <= 0) return 0
+  if (depth === 1) return 0
+  const clamped = Math.max(0, Math.min(1, fraction))
+  return Math.max(0, Math.min(depth - 1, Math.round(clamped * (depth - 1))))
+}
+
+/**
+ * Convert volume-mesh local coordinates (BoxGeometry centered at origin, size
+ * = normalized physical size) into image-space fractions used by the 2D pane.
+ * Y is flipped so mesh +Y (superior in the volume root) maps to image top.
+ */
+export function volumeLocalToImageCoords(
+  localX: number,
+  localY: number,
+  localZ: number,
+  volumeSize: Vec3Tuple,
+): { x: number; y: number; stackFraction: number } {
+  const [sizeX, sizeY, sizeZ] = volumeSize
+  const safeX = sizeX > 1e-8 ? sizeX : 1
+  const safeY = sizeY > 1e-8 ? sizeY : 1
+  const safeZ = sizeZ > 1e-8 ? sizeZ : 1
+  return {
+    x: Math.max(0, Math.min(1, localX / safeX + 0.5)),
+    y: Math.max(0, Math.min(1, 0.5 - localY / safeY)),
+    stackFraction: Math.max(0, Math.min(1, localZ / safeZ + 0.5)),
+  }
+}
+
+/**
  * Map a slice index from one stack depth to another by relative through-plane
  * position. Used when hopping series so AX FLAIR → AX T1 keeps the same
  * fractional depth instead of always jumping to mid-stack.

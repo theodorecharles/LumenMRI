@@ -2063,6 +2063,53 @@ button:disabled {
   font-size: 8px;
 }
 
+/* Brief flash after Alt+click pick on the 3D volume jumps the linked 2D slice. */
+.slice-pick-crosshair {
+  position: absolute;
+  z-index: 8;
+  width: 44px;
+  height: 44px;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  animation: slice-pick-flash 0.9s ease-out forwards;
+}
+
+.slice-pick-crosshair::before,
+.slice-pick-crosshair::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  background: rgba(67, 220, 243, 0.95);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 0 12px rgba(67, 220, 243, 0.55);
+  transform: translate(-50%, -50%);
+}
+
+.slice-pick-crosshair::before {
+  width: 2px;
+  height: 100%;
+}
+
+.slice-pick-crosshair::after {
+  width: 100%;
+  height: 2px;
+}
+
+@keyframes slice-pick-flash {
+  0% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.35);
+  }
+  55% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.92);
+  }
+}
+
 .crop-overlay.panning-ready {
   pointer-events: auto;
   cursor: grab;
