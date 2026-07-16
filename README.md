@@ -55,6 +55,8 @@ Unsupported transfer syntaxes are marked unavailable instead of being decoded in
 - `3`: linked split view
 - `↑` / `,`: previous slice
 - `↓` / `.`: next slice
+- `Home` / `End`: first / last slice (pauses cine)
+- `Space`: toggle cine play (2D and split layouts)
 - `R`: reset 3D view
 - `F`: fullscreen workspace
 - `S`: save the active rendering

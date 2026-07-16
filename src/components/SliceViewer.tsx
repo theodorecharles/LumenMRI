@@ -23,6 +23,10 @@ const ZOOM_STEP = 1.12
 
 export interface SliceViewerHandle {
   capture: () => void
+  /** Toggle cine play/pause (no-op when stack has a single slice). */
+  toggleCine: () => void
+  /** Stop cine without changing the current slice (e.g. before Home/End jumps). */
+  pauseCine: () => void
 }
 
 const CINE_FPS_OPTIONS = [5, 10, 15] as const
@@ -219,6 +223,15 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const viewTransformed = view.scale > MIN_VIEW_SCALE + 0.001 || Math.abs(view.x) > 0.5 || Math.abs(view.y) > 0.5
     viewRef.current = view
 
+    const toggleCine = () => {
+      if (depth <= 1) return
+      setCinePlaying((playing) => !playing)
+    }
+
+    const pauseCine = () => {
+      setCinePlaying(false)
+    }
+
     useImperativeHandle(
       forwardedRef,
       () => ({
@@ -263,6 +276,8 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
           })
           link.click()
         },
+        toggleCine,
+        pauseCine,
       }),
       [
         depth,
@@ -387,11 +402,6 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
 
     const stepSlice = (amount: number) => {
       setSliceFromUser(safeIndex + amount)
-    }
-
-    const toggleCine = () => {
-      if (depth <= 1) return
-      setCinePlaying((playing) => !playing)
     }
 
     const resetView = () => {
