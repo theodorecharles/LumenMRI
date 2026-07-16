@@ -77,7 +77,7 @@ export default function App() {
   /** Through-plane depth of the last applied volume; null means no prior slice context. */
   const previousDepthRef = useRef<number | null>(null)
   const sliceIndexRef = useRef(0)
-  const { series, volume, setVolume, progress, error, scanFiles, loadSeries } = useDicomLoader()
+  const { series, volume, setVolume, progress, error, setError, scanFiles, loadSeries } = useDicomLoader()
   const reconstruction = useVolumeReconstruction(volume)
   const [screen, setScreen] = useState<Screen>('library')
   const [catalog, setCatalog] = useState<BundledCatalog | null>(null)
@@ -173,6 +173,7 @@ export default function App() {
       // Latest click wins: bump generation so an in-flight open cannot apply after a newer one.
       const generation = ++openGenerationRef.current
       setCatalogError(null)
+      setError(null)
       setOpeningId(selection.id)
       try {
         let selectedVolume = volumeCache.current.get(selection.id)
@@ -188,17 +189,22 @@ export default function App() {
         if (pushHistory) pushViewerLocation(selection.id)
       } catch (loadError: unknown) {
         if (generation !== openGenerationRef.current) return
-        setCatalogError(
-          loadError instanceof Error ? loadError.message : 'The selected volume could not be opened.',
-        )
-        setScreen('library')
+        const message =
+          loadError instanceof Error ? loadError.message : 'The selected volume could not be opened.'
+        // Keep a valid prior volume on the viewer; library-only fallback when nothing is loaded.
+        if (volume) {
+          setError(message)
+        } else {
+          setCatalogError(message)
+          setScreen('library')
+        }
       } finally {
         if (generation === openGenerationRef.current) {
           setOpeningId(null)
         }
       }
     },
-    [pushViewerLocation, setVolume],
+    [pushViewerLocation, setError, setVolume, volume],
   )
 
   useEffect(() => {

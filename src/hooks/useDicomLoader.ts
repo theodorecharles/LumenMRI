@@ -107,6 +107,7 @@ export function useDicomLoader() {
     setVolume: setVolumeClearingError,
     progress,
     error,
+    setError,
     scanFiles,
     loadSeries,
     reset,
