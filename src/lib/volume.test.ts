@@ -4,6 +4,8 @@ import {
   mapRelativeSliceIndex,
   midSliceIndex,
   normalizePhysicalSize,
+  sliceIndexFromStackFraction,
+  volumeLocalToImageCoords,
 } from './volume'
 import { planVolumeReconstruction, reconstructVolume } from './reconstructVolume'
 
@@ -34,6 +36,37 @@ describe('volume utilities', () => {
     expect(midSliceIndex(21)).toBe(10)
     expect(midSliceIndex(1)).toBe(0)
     expect(midSliceIndex(0)).toBe(0)
+  })
+
+  it('maps stack fraction to slice index for 3D→2D pick', () => {
+    expect(sliceIndexFromStackFraction(0, 21)).toBe(0)
+    expect(sliceIndexFromStackFraction(1, 21)).toBe(20)
+    expect(sliceIndexFromStackFraction(0.5, 21)).toBe(10)
+    expect(sliceIndexFromStackFraction(0.25, 41)).toBe(10)
+    expect(sliceIndexFromStackFraction(-1, 10)).toBe(0)
+    expect(sliceIndexFromStackFraction(2, 10)).toBe(9)
+    expect(sliceIndexFromStackFraction(0.5, 1)).toBe(0)
+    expect(sliceIndexFromStackFraction(0.5, 0)).toBe(0)
+  })
+
+  it('converts volume-local coords to image fractions', () => {
+    const size: [number, number, number] = [1, 0.8, 0.5]
+    // Origin → center of stack and image
+    expect(volumeLocalToImageCoords(0, 0, 0, size)).toEqual({
+      x: 0.5,
+      y: 0.5,
+      stackFraction: 0.5,
+    })
+    // +X / -Y (mesh) / +Z → right / bottom / far
+    const corner = volumeLocalToImageCoords(0.5, -0.4, 0.25, size)
+    expect(corner.x).toBeCloseTo(1)
+    expect(corner.y).toBeCloseTo(1)
+    expect(corner.stackFraction).toBeCloseTo(1)
+    // Clamps outside the box
+    const outside = volumeLocalToImageCoords(-2, 2, -2, size)
+    expect(outside.x).toBe(0)
+    expect(outside.y).toBe(0)
+    expect(outside.stackFraction).toBe(0)
   })
 
   it('creates a non-empty, MRI-like demo volume', () => {

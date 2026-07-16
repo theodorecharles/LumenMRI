@@ -34,7 +34,7 @@ import { EmptyStage } from './components/EmptyStage'
 import { ScanLibrary } from './components/ScanLibrary'
 import { SeriesPanel } from './components/SeriesPanel'
 import { SliceViewer, type SliceViewerHandle } from './components/SliceViewer'
-import type { ViewerStageHandle } from './components/ViewerStage'
+import type { ViewerStageHandle, VolumeSlicePick } from './components/ViewerStage'
 
 const ViewerStage = lazy(() =>
   import('./components/ViewerStage').then((module) => ({ default: module.ViewerStage })),
@@ -99,6 +99,13 @@ export default function App() {
   const [cropEditing, setCropEditing] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [isStageFullscreen, setIsStageFullscreen] = useState(false)
+  /** Brief 2D crosshair flash after a 3D volume slice pick (token forces re-trigger). */
+  const [slicePickFlash, setSlicePickFlash] = useState<{
+    token: number
+    x: number
+    y: number
+  } | null>(null)
+  const slicePickFlashTokenRef = useRef(0)
 
   const workerBusy = progress.phase === 'scanning' || progress.phase === 'loading'
   const busy = workerBusy || openingId !== null
@@ -326,6 +333,18 @@ export default function App() {
   useEffect(() => {
     if (cropEditing) setAutoRotate(false)
   }, [cropEditing])
+
+  const slicePickEnabled = showSliceHighlight || viewerLayout === 'split'
+
+  const handleVolumeSlicePick = useCallback((pick: VolumeSlicePick) => {
+    setSliceIndex(pick.sliceIndex)
+    slicePickFlashTokenRef.current += 1
+    setSlicePickFlash({
+      token: slicePickFlashTokenRef.current,
+      x: pick.x,
+      y: pick.y,
+    })
+  }, [])
 
   const toggleStageFullscreen = useCallback(() => {
     if (isStageFullscreen) {
@@ -596,6 +615,8 @@ export default function App() {
                           cropBounds={cropBounds}
                           cropEditing={cropEditing}
                           onCropChange={setCropBounds}
+                          slicePickEnabled={slicePickEnabled}
+                          onSlicePick={handleVolumeSlicePick}
                         />
                       </Suspense>
                       <div className="volume-hud top-left">
@@ -614,6 +635,11 @@ export default function App() {
                       </div>
                       <div className="volume-hud bottom-left">
                         <MousePointer2 size={14} /><span>Drag to orbit</span><i /><span>Scroll to zoom</span>
+                        {slicePickEnabled ? (
+                          <>
+                            <i /><span>Alt+click → 2D slice</span>
+                          </>
+                        ) : null}
                       </div>
                       <div className="render-stats">
                         <span>
@@ -643,6 +669,7 @@ export default function App() {
                       cropEditing={cropEditing}
                       onCropEditingChange={setCropEditing}
                       viewerLayout={viewerLayout}
+                      pickFlash={slicePickFlash}
                     />
                   ) : null}
                 </div>

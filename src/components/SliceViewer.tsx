@@ -40,6 +40,8 @@ interface SliceViewerProps {
   onCropEditingChange: (editing: boolean) => void
   /** Used to pause cine when the viewer layout changes. */
   viewerLayout?: string
+  /** Flash a crosshair after a 3D volume pick (token re-triggers the animation). */
+  pickFlash?: { token: number; x: number; y: number } | null
 }
 
 interface CanvasRect {
@@ -187,6 +189,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     cropEditing,
     onCropEditingChange,
     viewerLayout,
+    pickFlash = null,
   }, forwardedRef) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const viewportRef = useRef<HTMLDivElement>(null)
@@ -212,6 +215,11 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const [windowLevelDrag, setWindowLevelDrag] = useState<{ window: number; level: number } | null>(null)
     const [cinePlaying, setCinePlaying] = useState(false)
     const [cineFps, setCineFps] = useState<CineFps>(10)
+    const [activePickFlash, setActivePickFlash] = useState<{
+      token: number
+      x: number
+      y: number
+    } | null>(null)
     const [width, height, depth] = volume.dimensions
     const safeIndex = Math.max(0, Math.min(depth - 1, sliceIndex))
     const labels = orientationLabels(volume.orientation)
@@ -363,6 +371,18 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       }, intervalMs)
       return () => window.clearInterval(timer)
     }, [cinePlaying, cineFps, depth, onSliceChange])
+
+    useEffect(() => {
+      if (!pickFlash) return
+      setCinePlaying(false)
+      setActivePickFlash(pickFlash)
+      const timer = window.setTimeout(() => {
+        setActivePickFlash((current) => (
+          current?.token === pickFlash.token ? null : current
+        ))
+      }, 900)
+      return () => window.clearTimeout(timer)
+    }, [pickFlash])
 
     /** User-driven slice change — pauses cine playback. */
     const setSliceFromUser = (index: number) => {
@@ -844,6 +864,18 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                       c {liveProbe.sample.col} · r {liveProbe.sample.row}
                     </span>
                   </div>
+                ) : null}
+                {activePickFlash ? (
+                  <div
+                    key={activePickFlash.token}
+                    className="slice-pick-crosshair"
+                    data-testid="slice-pick-crosshair"
+                    aria-hidden="true"
+                    style={{
+                      left: `${activePickFlash.x * 100}%`,
+                      top: `${activePickFlash.y * 100}%`,
+                    }}
+                  />
                 ) : null}
               </div>
             ) : null}
