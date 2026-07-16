@@ -366,7 +366,16 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLButtonElement) return
+      const target = event.target
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        target instanceof HTMLButtonElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return
+      }
       if (event.key.toLowerCase() === 'r') viewerRef.current?.resetView()
       if (event.key.toLowerCase() === 'f') toggleStageFullscreen()
       if (event.key.toLowerCase() === 's') captureActiveView()
@@ -377,8 +386,26 @@ export default function App() {
       if (event.key === '1') setViewerLayout('volume')
       if (event.key === '2') setViewerLayout('slice')
       if (event.key === '3') setViewerLayout('split')
+      // Space toggles cine only in 2D / split (SliceViewer mounted with stack play).
+      if (event.key === ' ' && (viewerLayout === 'slice' || viewerLayout === 'split')) {
+        event.preventDefault()
+        sliceViewerRef.current?.toggleCine()
+      }
       if (volume) {
         const depth = volume.dimensions[2]
+        if (event.key === 'Home') {
+          event.preventDefault()
+          // Match step/slider: user slice jumps pause cine.
+          sliceViewerRef.current?.pauseCine()
+          setSliceIndex(0)
+          return
+        }
+        if (event.key === 'End') {
+          event.preventDefault()
+          sliceViewerRef.current?.pauseCine()
+          setSliceIndex(Math.max(0, depth - 1))
+          return
+        }
         const step =
           event.key === 'ArrowUp' || event.key === ','
             ? -1
@@ -393,7 +420,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [captureActiveView, goHome, isStageFullscreen, toggleStageFullscreen, volume])
+  }, [captureActiveView, goHome, isStageFullscreen, toggleStageFullscreen, viewerLayout, volume])
 
   const onDrop = async (event: React.DragEvent) => {
     event.preventDefault()
