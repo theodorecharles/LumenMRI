@@ -75,7 +75,8 @@ export default function App() {
   /** Through-plane depth of the last applied volume; null means no prior slice context. */
   const previousDepthRef = useRef<number | null>(null)
   const sliceIndexRef = useRef(0)
-  const { series, volume, setVolume, progress, error, scanFiles, loadSeries } = useDicomLoader()
+  const { series, volume, setVolume, progress, error, scanFiles, loadSeries, cancelInFlight } =
+    useDicomLoader()
   const reconstruction = useVolumeReconstruction(volume)
   const [screen, setScreen] = useState<Screen>('library')
   const [catalog, setCatalog] = useState<BundledCatalog | null>(null)
@@ -169,6 +170,9 @@ export default function App() {
   const openBundledSeries = useCallback(
     async (selection: BundledSeries, pushHistory = true) => {
       if (openingId) return
+      // Cancel any in-flight local load-series before async fetch so volume-ready
+      // / load-progress cannot overwrite the bundled volume or flip progress.
+      cancelInFlight()
       setCatalogError(null)
       setOpeningId(selection.id)
       try {
@@ -190,7 +194,7 @@ export default function App() {
         setOpeningId(null)
       }
     },
-    [openingId, pushViewerLocation, setVolume],
+    [cancelInFlight, openingId, pushViewerLocation, setVolume],
   )
 
   useEffect(() => {
