@@ -13,8 +13,15 @@ const IDLE_PROGRESS: ScanProgress = {
   label: 'Ready',
 }
 
+export type LoadSeriesOptions = {
+  /** When set, volume-ready is delivered here instead of replacing the primary volume. */
+  onVolume?: (volume: VolumeData) => void
+}
+
 export function useDicomLoader() {
   const workerRef = useRef<Worker | null>(null)
+  /** One-shot handler for compare-pane loads that must not clobber the primary volume. */
+  const pendingOnVolumeRef = useRef<((volume: VolumeData) => void) | null>(null)
   const [series, setSeries] = useState<SeriesSummary[]>([])
   const [volume, setVolume] = useState<VolumeData | null>(null)
   const [progress, setProgress] = useState<ScanProgress>(IDLE_PROGRESS)
@@ -33,6 +40,7 @@ export function useDicomLoader() {
           setProgress({ phase: 'scanning', progress: message.progress, label: message.label })
           break
         case 'scan-complete':
+          pendingOnVolumeRef.current = null
           setSeries(message.series)
           setProgress({
             phase: 'ready',
@@ -43,12 +51,20 @@ export function useDicomLoader() {
         case 'load-progress':
           setProgress({ phase: 'loading', progress: message.progress, label: message.label })
           break
-        case 'volume-ready':
-          setVolume(message.volume)
+        case 'volume-ready': {
+          const onVolume = pendingOnVolumeRef.current
+          pendingOnVolumeRef.current = null
+          if (onVolume) {
+            onVolume(message.volume)
+          } else {
+            setVolume(message.volume)
+          }
           setError(null)
           setProgress({ phase: 'ready', progress: 1, label: 'GPU volume ready' })
           break
+        }
         case 'error':
+          pendingOnVolumeRef.current = null
           setError(message.message)
           setProgress({ phase: 'error', progress: 0, label: message.message })
           break
@@ -75,6 +91,7 @@ export function useDicomLoader() {
   const scanFiles = useCallback(
     (files: File[]) => {
       if (!files.length) return
+      pendingOnVolumeRef.current = null
       setError(null)
       setSeries([])
       setVolume(null)
@@ -85,15 +102,17 @@ export function useDicomLoader() {
   )
 
   const loadSeries = useCallback(
-    (seriesId: string) => {
+    (seriesId: string, options?: LoadSeriesOptions) => {
       setError(null)
       setProgress({ phase: 'loading', progress: 0, label: 'Preparing volume' })
+      pendingOnVolumeRef.current = options?.onVolume ?? null
       send({ type: 'load-series', seriesId })
     },
     [send],
   )
 
   const reset = useCallback(() => {
+    pendingOnVolumeRef.current = null
     send({ type: 'reset' })
     setSeries([])
     setVolume(null)
