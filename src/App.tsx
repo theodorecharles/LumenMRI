@@ -86,6 +86,8 @@ export default function App() {
   const [volumeSettings, setVolumeSettings] = useState(DEFAULT_VOLUME_SETTINGS)
   const [autoRotate, setAutoRotate] = useState(false)
   const [reconstructionEnabled, setReconstructionEnabled] = useState(true)
+  /** True only when Acquired was forced by a recon error — not a user mode pick. */
+  const reconstructionDisabledByErrorRef = useRef(false)
   const [cameraProjection, setCameraProjection] = useState<'perspective' | 'isometric'>('perspective')
   const [viewerLayout, setViewerLayout] = useState<ViewerLayout>('volume')
   const [sliceIndex, setSliceIndex] = useState(0)
@@ -109,6 +111,12 @@ export default function App() {
     () => [...bundledSeries.map(bundledSeriesSummary), ...series],
     [bundledSeries, series],
   )
+
+  const handleReconstructionEnabledChange = useCallback((enabled: boolean) => {
+    // Explicit user choice — do not auto-restore Enhanced on a later ready.
+    reconstructionDisabledByErrorRef.current = false
+    setReconstructionEnabled(enabled)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -135,16 +143,20 @@ export default function App() {
     inputRef.current?.setAttribute('directory', '')
   }, [])
 
-  // Terminal reconstruction failure: stay on acquired data, never leave Enhanced "Processing".
-  // Re-enable Enhanced when a later series reconstructs successfully so a prior error does not stick.
+  // Terminal reconstruction failure: force Acquired. Re-enable Enhanced only when that
+  // disable was error-driven (#2645) — not when the user chose Acquired during processing.
   useEffect(() => {
     if (reconstruction.status === 'error') {
+      reconstructionDisabledByErrorRef.current = true
       setReconstructionEnabled(false)
-    } else if (reconstruction.status === 'ready') {
+    } else if (
+      reconstruction.status === 'ready' &&
+      reconstructionDisabledByErrorRef.current
+    ) {
+      reconstructionDisabledByErrorRef.current = false
       setReconstructionEnabled(true)
     }
   }, [reconstruction.status])
-
   useEffect(() => {
     if (!series.length || activeSeriesId) return
     const recommended = series.find((item) => item.supported)
@@ -655,7 +667,7 @@ export default function App() {
             reconstructionReady={reconstruction.volume?.seriesId === volume?.seriesId}
             reconstructionStatus={reconstruction.status}
             reconstructionMessage={reconstruction.message}
-            onReconstructionEnabledChange={setReconstructionEnabled}
+            onReconstructionEnabledChange={handleReconstructionEnabledChange}
             cropBounds={cropBounds}
             onCropChange={setCropBounds}
             onSetView={(view) => viewerRef.current?.setView(view)}
