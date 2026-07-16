@@ -102,6 +102,81 @@ describe('compositeAnnotatedSlicePng', () => {
     createElement.mockRestore()
   })
 
+  it('draws pinned probe crosshairs and intensity labels', () => {
+    const { ctx, calls } = mockContext()
+    const createElement = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag !== 'canvas') return document.createElementNS('http://www.w3.org/1999/xhtml', tag)
+      const canvas = {
+        width: 0,
+        height: 0,
+        getContext: () => ctx,
+        toDataURL: () => 'data:image/png;base64,PROBES',
+      }
+      return canvas as unknown as HTMLCanvasElement
+    })
+
+    const source = mockSource()
+    const result = compositeAnnotatedSlicePng({
+      source,
+      seriesName: 'Ax FLAIR',
+      sliceIndex: 2,
+      sliceCount: 16,
+      window: 1,
+      level: 0.5,
+      labels: { top: 'A', right: 'L', bottom: 'P', left: 'R' },
+      measurements: [],
+      pinnedProbes: [
+        {
+          x: 0.4,
+          y: 0.6,
+          intensityLabel: 'I 128 · 1024',
+          coordsLabel: 'c 32 · r 48',
+        },
+      ],
+    })
+
+    expect(result).toBe('data:image/png;base64,PROBES')
+    expect(calls.some((call) => call.method === 'drawImage' && call.args[0] === source)).toBe(true)
+    // Crosshair arms + ring
+    expect(calls.some((call) => call.method === 'lineTo')).toBe(true)
+    expect(calls.some((call) => call.method === 'arc')).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'I 128 · 1024')).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'c 32 · r 48')).toBe(true)
+
+    createElement.mockRestore()
+  })
+
+  it('omits pin drawing when pinnedProbes is empty or absent', () => {
+    const { ctx, calls } = mockContext()
+    const createElement = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag !== 'canvas') return document.createElementNS('http://www.w3.org/1999/xhtml', tag)
+      const canvas = {
+        width: 0,
+        height: 0,
+        getContext: () => ctx,
+        toDataURL: () => 'data:image/png;base64,NOPINS',
+      }
+      return canvas as unknown as HTMLCanvasElement
+    })
+
+    const source = mockSource()
+    compositeAnnotatedSlicePng({
+      source,
+      seriesName: 'Series',
+      sliceIndex: 0,
+      sliceCount: 4,
+      window: 1,
+      level: 0.5,
+      labels: { top: 'A', right: 'L', bottom: 'P', left: 'R' },
+      measurements: [],
+    })
+
+    expect(calls.some((call) => call.method === 'fillText' && String(call.args[0]).startsWith('I '))).toBe(false)
+    expect(calls.some((call) => call.method === 'fillText' && String(call.args[0]).startsWith('c '))).toBe(false)
+
+    createElement.mockRestore()
+  })
+
   it('falls back to the source data URL when the composite context is missing', () => {
     const createElement = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
       if (tag !== 'canvas') return document.createElementNS('http://www.w3.org/1999/xhtml', tag)
