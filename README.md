@@ -50,6 +50,8 @@ Unsupported transfer syntaxes are marked unavailable instead of being decoded in
 
 ## Keyboard shortcuts
 
+Press `?` in the viewer (or the Help control in the stage toolbar) for the full in-app sheet, including 2D pan/zoom, window/level, and mouse modifiers.
+
 - `1`: 3D volume
 - `2`: 2D slice
 - `3`: linked split view
@@ -61,6 +63,7 @@ Unsupported transfer syntaxes are marked unavailable instead of being decoded in
 - `F`: fullscreen workspace
 - `S`: save the active rendering
 - `L`: scan library
+- `?`: open / close shortcut sheet
 
 ## Build and verify
 

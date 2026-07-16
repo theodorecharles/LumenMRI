@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import {
   Box,
   Camera,
+  CircleHelp,
   Columns2,
   Cpu,
   Crop,
@@ -33,6 +34,7 @@ import { ControlPanel } from './components/ControlPanel'
 import { EmptyStage } from './components/EmptyStage'
 import { ScanLibrary } from './components/ScanLibrary'
 import { SeriesPanel } from './components/SeriesPanel'
+import { ShortcutSheet } from './components/ShortcutSheet'
 import { SliceViewer, type SliceViewerHandle } from './components/SliceViewer'
 import type { ViewerStageHandle } from './components/ViewerStage'
 
@@ -99,6 +101,7 @@ export default function App() {
   const [cropEditing, setCropEditing] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [isStageFullscreen, setIsStageFullscreen] = useState(false)
+  const [shortcutSheetOpen, setShortcutSheetOpen] = useState(false)
 
   const workerBusy = progress.phase === 'scanning' || progress.phase === 'loading'
   const busy = workerBusy || openingId !== null
@@ -371,11 +374,26 @@ export default function App() {
         target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
         target instanceof HTMLSelectElement ||
-        target instanceof HTMLButtonElement ||
         (target instanceof HTMLElement && target.isContentEditable)
       ) {
         return
       }
+
+      // Discoverability sheet: toggle on ?, dismiss on Esc. Works even when a
+      // toolbar button is focused so the Help control can be keyboard-driven.
+      if (event.key === '?') {
+        event.preventDefault()
+        setShortcutSheetOpen((open) => !open)
+        return
+      }
+      if (event.key === 'Escape' && shortcutSheetOpen) {
+        event.preventDefault()
+        setShortcutSheetOpen(false)
+        return
+      }
+      if (shortcutSheetOpen) return
+
+      if (target instanceof HTMLButtonElement) return
       if (event.key.toLowerCase() === 'r') viewerRef.current?.resetView()
       if (event.key.toLowerCase() === 'f') toggleStageFullscreen()
       if (event.key.toLowerCase() === 's') captureActiveView()
@@ -420,7 +438,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [captureActiveView, goHome, isStageFullscreen, toggleStageFullscreen, viewerLayout, volume])
+  }, [captureActiveView, goHome, isStageFullscreen, shortcutSheetOpen, toggleStageFullscreen, viewerLayout, volume])
 
   const onDrop = async (event: React.DragEvent) => {
     event.preventDefault()
@@ -536,6 +554,18 @@ export default function App() {
                     </button>
                   </div>
                   <div className="tool-actions">
+                    <button
+                      className={shortcutSheetOpen ? 'icon-button active' : 'icon-button'}
+                      type="button"
+                      aria-label="Keyboard shortcuts"
+                      aria-haspopup="dialog"
+                      aria-expanded={shortcutSheetOpen}
+                      title="Keyboard shortcuts (?)"
+                      data-testid="shortcut-help-button"
+                      onClick={() => setShortcutSheetOpen((open) => !open)}
+                    >
+                      <CircleHelp size={16} />
+                    </button>
                     {viewerLayout !== 'slice' ? (
                       <>
                         <button
@@ -741,6 +771,8 @@ export default function App() {
           {busy ? progress.label : error || progress.phase === 'error' ? progress.label || error : 'Renderer ready'}
         </span>
       </footer>
+
+      <ShortcutSheet open={shortcutSheetOpen} onClose={() => setShortcutSheetOpen(false)} />
     </div>
   )
 }
