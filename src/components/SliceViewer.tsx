@@ -23,6 +23,10 @@ const ZOOM_STEP = 1.12
 
 export interface SliceViewerHandle {
   capture: () => void
+  /** Toggle cine play/pause (no-op when stack has a single slice). */
+  toggleCine: () => void
+  /** Stop cine without changing the current slice (e.g. before Home/End jumps). */
+  pauseCine: () => void
 }
 
 const CINE_FPS_OPTIONS = [5, 10, 15] as const
@@ -40,6 +44,12 @@ interface SliceViewerProps {
   onCropEditingChange: (editing: boolean) => void
   /** Used to pause cine when the viewer layout changes. */
   viewerLayout?: string
+  /** Flash a crosshair after a 3D volume pick (token re-triggers the animation). */
+  pickFlash?: { token: number; x: number; y: number } | null
+  /** Optional A/B badge for side-by-side compare panes. */
+  paneLabel?: string
+  /** Hide 3D crop controls (compare layout). */
+  hideCropControls?: boolean
 }
 
 interface CanvasRect {
@@ -187,6 +197,9 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     cropEditing,
     onCropEditingChange,
     viewerLayout,
+    pickFlash = null,
+    paneLabel,
+    hideCropControls = false,
   }, forwardedRef) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const viewportRef = useRef<HTMLDivElement>(null)
@@ -212,12 +225,26 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const [windowLevelDrag, setWindowLevelDrag] = useState<{ window: number; level: number } | null>(null)
     const [cinePlaying, setCinePlaying] = useState(false)
     const [cineFps, setCineFps] = useState<CineFps>(10)
+    const [activePickFlash, setActivePickFlash] = useState<{
+      token: number
+      x: number
+      y: number
+    } | null>(null)
     const [width, height, depth] = volume.dimensions
     const safeIndex = Math.max(0, Math.min(depth - 1, sliceIndex))
     const labels = orientationLabels(volume.orientation)
     sliceIndexRef.current = safeIndex
     const viewTransformed = view.scale > MIN_VIEW_SCALE + 0.001 || Math.abs(view.x) > 0.5 || Math.abs(view.y) > 0.5
     viewRef.current = view
+
+    const toggleCine = () => {
+      if (depth <= 1) return
+      setCinePlaying((playing) => !playing)
+    }
+
+    const pauseCine = () => {
+      setCinePlaying(false)
+    }
 
     useImperativeHandle(
       forwardedRef,
@@ -229,6 +256,19 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
           const visible = measurementDraft?.slice === safeIndex
             ? [...current, measurementDraft]
             : current
+          const showScalar =
+            Math.abs(volume.scalarRange[1] - volume.scalarRange[0] - 255) > 1
+            || Math.abs(volume.scalarRange[0]) > 0.5
+          const pins = pinnedProbes
+            .filter((probe) => probe.slice === safeIndex)
+            .map((probe) => ({
+              x: probe.x,
+              y: probe.y,
+              intensityLabel: showScalar
+                ? `I ${probe.sample.intensity} · ${formatProbeScalar(probe.sample.scalar)}`
+                : `I ${probe.sample.intensity}`,
+              coordsLabel: `c ${probe.sample.col} · r ${probe.sample.row}`,
+            }))
           const link = document.createElement('a')
           link.download = `lumen-${volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-slice-${safeIndex + 1}.png`
           link.href = compositeAnnotatedSlicePng({
@@ -246,9 +286,12 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
               end: measurement.end,
               label: measurementSummary(measurement, volume, width, height),
             })),
+            pinnedProbes: pins,
           })
           link.click()
         },
+        toggleCine,
+        pauseCine,
       }),
       [
         depth,
@@ -256,6 +299,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         labels,
         measurementDraft,
         measurements,
+        pinnedProbes,
         safeIndex,
         volume,
         volumeSettings.level,
@@ -364,6 +408,18 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       return () => window.clearInterval(timer)
     }, [cinePlaying, cineFps, depth, onSliceChange])
 
+    useEffect(() => {
+      if (!pickFlash) return
+      setCinePlaying(false)
+      setActivePickFlash(pickFlash)
+      const timer = window.setTimeout(() => {
+        setActivePickFlash((current) => (
+          current?.token === pickFlash.token ? null : current
+        ))
+      }, 900)
+      return () => window.clearTimeout(timer)
+    }, [pickFlash])
+
     /** User-driven slice change — pauses cine playback. */
     const setSliceFromUser = (index: number) => {
       setCinePlaying(false)
@@ -372,11 +428,6 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
 
     const stepSlice = (amount: number) => {
       setSliceFromUser(safeIndex + amount)
-    }
-
-    const toggleCine = () => {
-      if (depth <= 1) return
-      setCinePlaying((playing) => !playing)
     }
 
     const resetView = () => {
@@ -698,8 +749,9 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
 
     return (
       <section
-        className="slice-viewer"
-        aria-label="2D DICOM slice viewer"
+        className={paneLabel ? `slice-viewer pane-${paneLabel.toLowerCase()}` : 'slice-viewer'}
+        aria-label={paneLabel ? `2D DICOM slice viewer pane ${paneLabel}` : '2D DICOM slice viewer'}
+        data-pane={paneLabel || undefined}
         onWheel={handleWheel}
       >
         <div className="slice-viewport" ref={viewportRef}>
@@ -845,6 +897,18 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                     </span>
                   </div>
                 ) : null}
+                {activePickFlash ? (
+                  <div
+                    key={activePickFlash.token}
+                    className="slice-pick-crosshair"
+                    data-testid="slice-pick-crosshair"
+                    aria-hidden="true"
+                    style={{
+                      left: `${activePickFlash.x * 100}%`,
+                      top: `${activePickFlash.y * 100}%`,
+                    }}
+                  />
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -911,6 +975,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
           <span className="orientation-marker marker-bottom">{labels.bottom}</span>
           <span className="orientation-marker marker-left">{labels.left}</span>
           <div className="slice-metadata slice-meta-left">
+            {paneLabel ? <span className="slice-pane-badge" aria-hidden="true">{paneLabel}</span> : null}
             <span>{volume.description}</span>
             <b>{volume.orientation.toUpperCase()}</b>
             <small>{width} × {height}</small>
@@ -971,38 +1036,40 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
               ))}
             </select>
           </label>
-          <div className="slice-crop-actions">
-            <button
-              className={cropEditing ? 'active' : ''}
-              type="button"
-              aria-pressed={cropEditing}
-              onClick={() => {
-                setMeasurementTool(null)
-                setMeasurementDraft(null)
-                setProbeTool(false)
-                onCropEditingChange(!cropEditing)
-              }}
-            >
-              <Crop size={14} /><span>Crop 3D</span>
-            </button>
-            {cropped ? (
+          {!hideCropControls ? (
+            <div className="slice-crop-actions">
               <button
+                className={cropEditing ? 'active' : ''}
                 type="button"
-                aria-label="Reset volume crop"
-                title="Reset volume crop"
-                onClick={() => onCropChange({
-                  minX: 0,
-                  maxX: 1,
-                  minY: 0,
-                  maxY: 1,
-                  minZ: 0,
-                  maxZ: 1,
-                })}
+                aria-pressed={cropEditing}
+                onClick={() => {
+                  setMeasurementTool(null)
+                  setMeasurementDraft(null)
+                  setProbeTool(false)
+                  onCropEditingChange(!cropEditing)
+                }}
               >
-                <RotateCcw size={13} />
+                <Crop size={14} /><span>Crop 3D</span>
               </button>
-            ) : null}
-          </div>
+              {cropped ? (
+                <button
+                  type="button"
+                  aria-label="Reset volume crop"
+                  title="Reset volume crop"
+                  onClick={() => onCropChange({
+                    minX: 0,
+                    maxX: 1,
+                    minY: 0,
+                    maxY: 1,
+                    minZ: 0,
+                    maxZ: 1,
+                  })}
+                >
+                  <RotateCcw size={13} />
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <output>{safeIndex + 1}<small> / {depth}</small></output>
         </div>
       </section>

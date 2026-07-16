@@ -10,8 +10,20 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { CropBounds, ReconstructedVolume, VolumeData, VolumeSettings } from '../types'
 import { compositeAnnotatedVolumePng } from '../lib/sliceCapture'
-import { normalizePhysicalSize, PALETTES } from '../lib/volume'
+import {
+  normalizePhysicalSize,
+  PALETTES,
+  sliceIndexFromStackFraction,
+  volumeLocalToImageCoords,
+} from '../lib/volume'
 import { volumeFragmentShader, volumeVertexShader } from '../rendering/shaders'
+
+/** Result of Alt+click volume pick — stack index plus image-space fractions for the 2D flash. */
+export interface VolumeSlicePick {
+  sliceIndex: number
+  x: number
+  y: number
+}
 
 export type CameraView = 'perspective' | 'slices' | 'back' | 'side' | 'left' | 'top' | 'bottom'
 export type CameraProjection = 'perspective' | 'isometric'
@@ -36,6 +48,9 @@ interface ViewerStageProps {
   cropBounds: CropBounds
   cropEditing: boolean
   onCropChange: (bounds: CropBounds) => void
+  /** When true, Alt+click raycasts the volume box and reports a 2D slice jump. */
+  slicePickEnabled?: boolean
+  onSlicePick?: (pick: VolumeSlicePick) => void
 }
 
 interface Runtime {
@@ -108,6 +123,48 @@ const CROP_HANDLES: CropHandleDefinition[] = [
 
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.max(minimum, Math.min(maximum, value))
+
+const SLICE_PICK_DRAG_THRESHOLD_PX = 6
+
+/**
+ * Raycast the volume box (same Raycaster pattern as crop move-drag) and map the
+ * segment midpoint to an acquired-stack slice index + 2D image fractions.
+ */
+function pickSliceOnVolume(
+  runtime: Runtime,
+  clientX: number,
+  clientY: number,
+  stackDepth: number,
+): VolumeSlicePick | null {
+  if (!runtime.volumeMesh || !runtime.volumeRoot) return null
+  runtime.volumeRoot.updateWorldMatrix(true, true)
+  const canvasBounds = runtime.renderer.domElement.getBoundingClientRect()
+  if (canvasBounds.width < 1 || canvasBounds.height < 1) return null
+  const pointer = new THREE.Vector2(
+    ((clientX - canvasBounds.left) / canvasBounds.width) * 2 - 1,
+    -((clientY - canvasBounds.top) / canvasBounds.height) * 2 + 1,
+  )
+  const raycaster = new THREE.Raycaster()
+  raycaster.setFromCamera(pointer, runtime.camera)
+  const hits = raycaster.intersectObject(runtime.volumeMesh, false)
+  if (hits.length === 0) return null
+
+  const pointWorld = hits.length >= 2
+    ? hits[0].point.clone().add(hits[1].point).multiplyScalar(0.5)
+    : hits[0].point.clone()
+  const local = pointWorld.applyMatrix4(runtime.volumeMesh.matrixWorld.clone().invert())
+  const coords = volumeLocalToImageCoords(
+    local.x,
+    local.y,
+    local.z,
+    runtime.volumeSize,
+  )
+  return {
+    sliceIndex: sliceIndexFromStackFraction(coords.stackFraction, stackDepth),
+    x: coords.x,
+    y: coords.y,
+  }
+}
 
 function isCropped(bounds: CropBounds) {
   return bounds.minX > 0.001 || bounds.maxX < 0.999 ||
@@ -475,6 +532,8 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       cropBounds,
       cropEditing,
       onCropChange,
+      slicePickEnabled = false,
+      onSlicePick,
     },
     forwardedRef,
   ) {
@@ -483,6 +542,15 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
     const autoRotateRef = useRef(autoRotate)
     const cropHandleRefs = useRef<Record<string, HTMLButtonElement | null>>({})
     const cropDragRef = useRef<CropDrag | null>(null)
+    const slicePickEnabledRef = useRef(slicePickEnabled)
+    const cropEditingRef = useRef(cropEditing)
+    const onSlicePickRef = useRef(onSlicePick)
+    const stackDepthRef = useRef(volume.dimensions[2])
+    const pickGestureRef = useRef<{
+      pointerId: number
+      clientX: number
+      clientY: number
+    } | null>(null)
     const [renderError, setRenderError] = useState<string | null>(null)
 
     useEffect(() => {
@@ -490,10 +558,29 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
     }, [autoRotate])
 
     useEffect(() => {
+      slicePickEnabledRef.current = slicePickEnabled
+      if (containerRef.current) {
+        containerRef.current.dataset.slicePickEnabled = slicePickEnabled ? 'true' : 'false'
+      }
+    }, [slicePickEnabled])
+
+    useEffect(() => {
+      cropEditingRef.current = cropEditing
+    }, [cropEditing])
+
+    useEffect(() => {
+      onSlicePickRef.current = onSlicePick
+    }, [onSlicePick])
+
+    useEffect(() => {
+      stackDepthRef.current = volume.dimensions[2]
+    }, [volume.dimensions])
+
+    useEffect(() => {
       if (containerRef.current) containerRef.current.dataset.cropHandlesReady = 'false'
       if (cropEditing) return
       cropDragRef.current = null
-      if (runtimeRef.current) runtimeRef.current.controls.enabled = true
+      if (runtimeRef.current && !pickGestureRef.current) runtimeRef.current.controls.enabled = true
     }, [cropEditing])
 
     const beginCropDrag = (
@@ -854,11 +941,62 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       }
       renderer.domElement.addEventListener('webglcontextlost', onContextLost)
 
+      // Alt+click volume pick: capture-phase so OrbitControls does not start a drag.
+      const onPickPointerDown = (event: PointerEvent) => {
+        if (!slicePickEnabledRef.current || cropEditingRef.current) return
+        if (event.button !== 0 || !event.altKey) return
+        pickGestureRef.current = {
+          pointerId: event.pointerId,
+          clientX: event.clientX,
+          clientY: event.clientY,
+        }
+        runtime.controls.enabled = false
+        event.preventDefault()
+        event.stopPropagation()
+      }
+
+      const finishPickGesture = (event: PointerEvent) => {
+        const gesture = pickGestureRef.current
+        if (!gesture || gesture.pointerId !== event.pointerId) return
+        pickGestureRef.current = null
+        if (!cropEditingRef.current) runtime.controls.enabled = true
+        const dragged = Math.hypot(
+          event.clientX - gesture.clientX,
+          event.clientY - gesture.clientY,
+        ) > SLICE_PICK_DRAG_THRESHOLD_PX
+        if (dragged || !slicePickEnabledRef.current) return
+        const pick = pickSliceOnVolume(
+          runtime,
+          event.clientX,
+          event.clientY,
+          stackDepthRef.current,
+        )
+        if (pick) onSlicePickRef.current?.(pick)
+      }
+
+      const onPickPointerUp = (event: PointerEvent) => {
+        finishPickGesture(event)
+      }
+
+      const onPickPointerCancel = (event: PointerEvent) => {
+        const gesture = pickGestureRef.current
+        if (!gesture || gesture.pointerId !== event.pointerId) return
+        pickGestureRef.current = null
+        if (!cropEditingRef.current) runtime.controls.enabled = true
+      }
+
+      renderer.domElement.addEventListener('pointerdown', onPickPointerDown, true)
+      window.addEventListener('pointerup', onPickPointerUp)
+      window.addEventListener('pointercancel', onPickPointerCancel)
+
       return () => {
         cancelAnimationFrame(runtime.frame)
         resizeObserver.disconnect()
         runtime.controls.dispose()
         renderer.domElement.removeEventListener('webglcontextlost', onContextLost)
+        renderer.domElement.removeEventListener('pointerdown', onPickPointerDown, true)
+        window.removeEventListener('pointerup', onPickPointerUp)
+        window.removeEventListener('pointercancel', onPickPointerCancel)
         scene.children.forEach(disposeObject)
         renderer.dispose()
         renderer.domElement.remove()
@@ -1196,6 +1334,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         className="viewer-canvas"
         ref={containerRef}
         data-crop-cross-sections={cropEditing ? '6' : '0'}
+        data-slice-pick-enabled={slicePickEnabled ? 'true' : 'false'}
       >
         {renderError ? (
           <div className="viewer-error" role="alert">
