@@ -76,6 +76,8 @@ export type WorkerRequest =
   | { type: 'scan'; files: File[] }
   | { type: 'load-series'; seriesId: string }
   | { type: 'reset' }
+  /** Bump job generation only — drop in-flight load/scan posts without clearing series records. */
+  | { type: 'cancel' }
 
 export type WorkerResponse =
   | { type: 'scan-progress'; progress: number; label: string }

@@ -476,8 +476,8 @@ async function loadSeries(seriesId: string, generation: number) {
 worker.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
   const data = event.data
 
-  // scan/reset invalidate in-flight work and any queued jobs from older generations.
-  if (data.type === 'scan' || data.type === 'reset') {
+  // scan/reset/cancel invalidate in-flight work and any queued jobs from older generations.
+  if (data.type === 'scan' || data.type === 'reset' || data.type === 'cancel') {
     jobGeneration += 1
   }
   const generation = jobGeneration
@@ -498,6 +498,9 @@ worker.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
           break
         case 'reset':
           recordsBySeries = new Map()
+          break
+        case 'cancel':
+          // Generation already bumped; no further work.
           break
       }
     })
