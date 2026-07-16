@@ -297,13 +297,18 @@ export default function App() {
       return
     }
 
+    // Stage chrome only exists on the viewer; library has no stageRef.
+    // Without this guard, F still flips isStageFullscreen and CSS-hides header/footer.
+    const stage = stageRef.current
+    if (screen !== 'viewer' || !stage) return
+
     // iPhone Safari does not consistently support element fullscreen for WebGL.
     // Enter the app-level layout first, then enhance it with native fullscreen
     // on browsers that support it.
     setIsStageFullscreen(true)
-    const requestFullscreen = stageRef.current?.requestFullscreen
-    if (requestFullscreen) void requestFullscreen.call(stageRef.current).catch(() => undefined)
-  }, [isStageFullscreen])
+    const requestFullscreen = stage.requestFullscreen
+    if (requestFullscreen) void requestFullscreen.call(stage).catch(() => undefined)
+  }, [isStageFullscreen, screen])
 
   useEffect(() => {
     const onFullscreenChange = () => {
