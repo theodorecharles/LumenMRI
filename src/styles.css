@@ -2350,13 +2350,14 @@ button:disabled {
   color: #d9fbff;
   font-family: 'DM Mono', monospace;
   font-size: 8px;
-  line-height: 1;
-  white-space: nowrap;
+  line-height: 1.25;
+  white-space: pre;
   border: 1px solid rgba(104, 239, 255, 0.48);
   border-radius: 4px;
   background: rgba(3, 12, 17, 0.9);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.42);
   pointer-events: none;
+  text-align: center;
 }
 
 .measurement-label.roi {

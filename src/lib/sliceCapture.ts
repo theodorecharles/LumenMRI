@@ -98,11 +98,16 @@ function drawMeasurementLabel(
 ) {
   ctx.save()
   ctx.font = `${fontSize}px "DM Mono", ui-monospace, monospace`
+  const lines = text.split('\n')
   const paddingX = fontSize * 0.55
   const paddingY = fontSize * 0.4
-  const metrics = ctx.measureText(text)
-  const boxW = metrics.width + paddingX * 2
-  const boxH = fontSize + paddingY * 2
+  const lineGap = fontSize * 0.2
+  let maxLineW = 0
+  for (const line of lines) {
+    maxLineW = Math.max(maxLineW, ctx.measureText(line).width)
+  }
+  const boxW = maxLineW + paddingX * 2
+  const boxH = lines.length * fontSize + Math.max(0, lines.length - 1) * lineGap + paddingY * 2
   const boxX = x - boxW / 2
   const boxY = y - boxH - fontSize * 0.55
 
@@ -116,7 +121,10 @@ function drawMeasurementLabel(
   ctx.fillStyle = tool === 'roi' ? '#ffe0bd' : '#d9fbff'
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'center'
-  ctx.fillText(text, x, boxY + boxH / 2)
+  const firstBaseline = boxY + paddingY + fontSize / 2
+  for (let i = 0; i < lines.length; i += 1) {
+    ctx.fillText(lines[i]!, x, firstBaseline + i * (fontSize + lineGap))
+  }
   ctx.restore()
 }
 

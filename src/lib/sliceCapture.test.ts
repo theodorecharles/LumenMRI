@@ -83,7 +83,7 @@ describe('compositeAnnotatedSlicePng', () => {
           tool: 'roi',
           start: { x: 0.55, y: 0.15 },
           end: { x: 0.85, y: 0.4 },
-          label: '40 mm² · μ 48',
+          label: '40 mm² · μ 48\nσ 12 · 30–60',
         },
       ],
     })
@@ -94,6 +94,7 @@ describe('compositeAnnotatedSlicePng', () => {
     expect(calls.some((call) => call.method === 'strokeRect')).toBe(true)
     expect(calls.some((call) => call.method === 'fillText' && call.args[0] === '12 mm')).toBe(true)
     expect(calls.some((call) => call.method === 'fillText' && call.args[0] === '40 mm² · μ 48')).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'σ 12 · 30–60')).toBe(true)
     expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'A')).toBe(true)
     expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'Ax FLAIR')).toBe(true)
     expect(calls.some((call) => call.method === 'fillText' && String(call.args[0]).includes('SL 005'))).toBe(true)
