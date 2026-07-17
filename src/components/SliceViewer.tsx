@@ -14,6 +14,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { formatProbeScalar, samplePixelAt, type PixelProbeSample } from '../lib/pixelProbe'
+import { computeRoiStats, formatRoiSummary } from '../lib/roiStats'
 import { compositeAnnotatedSlicePng } from '../lib/sliceCapture'
 import type { CropBounds, VolumeData, VolumeSettings } from '../types'
 
@@ -167,22 +168,17 @@ function measurementSummary(
     return `${millimeters < 10 ? millimeters.toFixed(1) : millimeters.toFixed(0)} mm`
   }
 
-  const minPixelX = Math.max(0, Math.min(width - 1, Math.floor(Math.min(measurement.start.x, measurement.end.x) * width)))
-  const maxPixelX = Math.max(minPixelX, Math.min(width - 1, Math.ceil(Math.max(measurement.start.x, measurement.end.x) * width) - 1))
-  const minPixelY = Math.max(0, Math.min(height - 1, Math.floor(Math.min(measurement.start.y, measurement.end.y) * height)))
-  const maxPixelY = Math.max(minPixelY, Math.min(height - 1, Math.ceil(Math.max(measurement.start.y, measurement.end.y) * height) - 1))
-  let signal = 0
-  let count = 0
-  const sliceOffset = measurement.slice * width * height
-  for (let y = minPixelY; y <= maxPixelY; y += 1) {
-    for (let x = minPixelX; x <= maxPixelX; x += 1) {
-      signal += volume.data[sliceOffset + y * width + x]
-      count += 1
-    }
-  }
-  const area = count * volume.spacing[0] * volume.spacing[1]
-  const mean = count ? signal / count : 0
-  return `${area < 100 ? area.toFixed(1) : area.toFixed(0)} mm² · μ ${mean.toFixed(0)}`
+  const stats = computeRoiStats(
+    volume,
+    {
+      start: measurement.start,
+      end: measurement.end,
+      slice: measurement.slice,
+    },
+    width,
+    height,
+  )
+  return formatRoiSummary(stats)
 }
 
 export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
@@ -928,7 +924,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
               className={measurementTool === 'roi' ? 'active' : ''}
               aria-label="ROI area measurement"
               aria-pressed={measurementTool === 'roi'}
-              title="Measure ROI area and mean signal"
+              title="Measure ROI area, mean, SD, min–max"
               onClick={() => selectMeasurementTool('roi')}
             >
               <SquareDashed size={14} /><span>ROI</span>

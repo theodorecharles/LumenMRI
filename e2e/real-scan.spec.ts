@@ -217,6 +217,8 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
   }
   await expect(page.locator('.measurement-label.roi')).toContainText('mm²')
   await expect(page.locator('.measurement-label.roi')).toContainText('μ')
+  await expect(page.locator('.measurement-label.roi')).toContainText('σ')
+  await expect(page.locator('.measurement-label.roi')).toContainText('–')
   await page.screenshot({ path: 'artifacts/linked-split-view.png', fullPage: true })
   await page.getByRole('button', { name: 'Clear measurements on slice' }).click()
   await expect(page.locator('.measurement-label')).toHaveCount(0)
