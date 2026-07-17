@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { compositeAnnotatedSlicePng, compositeAnnotatedVolumePng } from './sliceCapture'
+import {
+  compositeAnnotatedSlicePng,
+  compositeAnnotatedVolumePng,
+  compositeCompareSlicePng,
+  renderAnnotatedSliceCanvas,
+} from './sliceCapture'
 
 type DrawCall = { method: string; args: unknown[] }
 
@@ -203,6 +208,103 @@ describe('compositeAnnotatedSlicePng', () => {
 
     expect(result).toBe('data:image/png;base64,SOURCE')
     createElement.mockRestore()
+  })
+})
+
+describe('renderAnnotatedSliceCanvas', () => {
+  it('returns a canvas with the annotated frame', () => {
+    const { ctx } = mockContext()
+    const createElement = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag !== 'canvas') return document.createElementNS('http://www.w3.org/1999/xhtml', tag)
+      const canvas = {
+        width: 0,
+        height: 0,
+        getContext: () => ctx,
+        toDataURL: () => 'data:image/png;base64,CANVAS',
+      }
+      return canvas as unknown as HTMLCanvasElement
+    })
+
+    const source = mockSource(64, 48)
+    const result = renderAnnotatedSliceCanvas({
+      source,
+      seriesName: 'Series',
+      sliceIndex: 0,
+      sliceCount: 4,
+      window: 1,
+      level: 0.5,
+      labels: { top: 'A', right: 'L', bottom: 'P', left: 'R' },
+      measurements: [],
+    })
+
+    expect(result).not.toBeNull()
+    expect(result?.width).toBe(64)
+    expect(result?.height).toBe(48)
+    createElement.mockRestore()
+  })
+
+  it('returns null when the source has no size', () => {
+    const source = mockSource(0, 0)
+    expect(
+      renderAnnotatedSliceCanvas({
+        source,
+        seriesName: 'Series',
+        sliceIndex: 0,
+        sliceCount: 1,
+        window: 1,
+        level: 0.5,
+        labels: { top: 'A', right: 'L', bottom: 'P', left: 'R' },
+        measurements: [],
+      }),
+    ).toBeNull()
+  })
+})
+
+describe('compositeCompareSlicePng', () => {
+  it('stitches A and B with gutter and pane badges', () => {
+    const { ctx, calls } = mockContext()
+    const createElement = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag !== 'canvas') return document.createElementNS('http://www.w3.org/1999/xhtml', tag)
+      const canvas = {
+        width: 0,
+        height: 0,
+        getContext: () => ctx,
+        toDataURL: () => 'data:image/png;base64,COMPARE',
+      }
+      return canvas as unknown as HTMLCanvasElement
+    })
+
+    const left = mockSource(80, 60)
+    const right = mockSource(100, 80)
+    const result = compositeCompareSlicePng({
+      left,
+      right,
+      gutter: 8,
+      leftLabel: 'A',
+      rightLabel: 'B',
+    })
+
+    expect(result).toBe('data:image/png;base64,COMPARE')
+    // Shared height = max(60, 80) = 80; left scaled to 80/60
+    const drawCalls = calls.filter((call) => call.method === 'drawImage')
+    expect(drawCalls.length).toBe(2)
+    expect(drawCalls[0].args[0]).toBe(left)
+    expect(drawCalls[0].args[3]).toBe(Math.round(80 * (80 / 60))) // leftW
+    expect(drawCalls[0].args[4]).toBe(80) // targetH
+    expect(drawCalls[1].args[0]).toBe(right)
+    expect(drawCalls[1].args[1]).toBe(Math.round(80 * (80 / 60)) + 8) // leftW + gutter
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'A')).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'B')).toBe(true)
+
+    createElement.mockRestore()
+  })
+
+  it('falls back to left-only when right has no size', () => {
+    const left = mockSource(40, 40)
+    const right = mockSource(0, 0)
+    const result = compositeCompareSlicePng({ left, right })
+    expect(result).toBe('data:image/png;base64,SOURCE')
+    expect(left.toDataURL).toHaveBeenCalled()
   })
 })
 
