@@ -1,4 +1,4 @@
-export type CaptureMeasurementTool = 'distance' | 'roi'
+export type CaptureMeasurementTool = 'distance' | 'roi' | 'angle'
 
 export interface CapturePoint {
   x: number
@@ -10,6 +10,8 @@ export interface CaptureMeasurement {
   tool: CaptureMeasurementTool
   start: CapturePoint
   end: CapturePoint
+  /** Shared vertex for angle (start—vertex—end rays). Required when tool is `angle`. */
+  vertex?: CapturePoint
   label: string
 }
 
@@ -59,6 +61,8 @@ const DISTANCE_STROKE = '#68efff'
 const DISTANCE_ENDPOINT = '#b9f9ff'
 const ROI_STROKE = '#ffb263'
 const ROI_FILL = 'rgba(255, 170, 91, 0.08)'
+const ANGLE_STROKE = '#c4a0ff'
+const ANGLE_ENDPOINT = '#e4d4ff'
 const LABEL_BG = 'rgba(3, 12, 17, 0.9)'
 const MARKER_BG = 'rgba(4, 12, 17, 0.78)'
 const META_DIM = '#718991'
@@ -107,13 +111,19 @@ function drawMeasurementLabel(
   const boxY = y - boxH - fontSize * 0.55
 
   ctx.fillStyle = LABEL_BG
-  ctx.strokeStyle = tool === 'roi' ? 'rgba(255, 178, 99, 0.56)' : 'rgba(104, 239, 255, 0.48)'
+  ctx.strokeStyle =
+    tool === 'roi'
+      ? 'rgba(255, 178, 99, 0.56)'
+      : tool === 'angle'
+        ? 'rgba(196, 160, 255, 0.55)'
+        : 'rgba(104, 239, 255, 0.48)'
   ctx.lineWidth = Math.max(1, fontSize * 0.08)
   roundRect(ctx, boxX, boxY, boxW, boxH, Math.max(2, fontSize * 0.35))
   ctx.fill()
   ctx.stroke()
 
-  ctx.fillStyle = tool === 'roi' ? '#ffe0bd' : '#d9fbff'
+  ctx.fillStyle =
+    tool === 'roi' ? '#ffe0bd' : tool === 'angle' ? '#efe4ff' : '#d9fbff'
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'center'
   ctx.fillText(text, x, boxY + boxH / 2)
@@ -355,6 +365,47 @@ export function compositeAnnotatedSlicePng(input: AnnotatedSliceCaptureInput): s
         Math.max(0.05, Math.min(0.95, labelX)) * width,
         Math.max(0.05, Math.min(0.95, labelY)) * height,
         'distance',
+        labelFont,
+      )
+    } else if (measurement.tool === 'angle' && measurement.vertex) {
+      const vx = measurement.vertex.x * width
+      const vy = measurement.vertex.y * height
+      ctx.save()
+      ctx.strokeStyle = ANGLE_STROKE
+      ctx.lineWidth = stroke
+      ctx.setLineDash([4 * scale, 2 * scale])
+      ctx.shadowColor = 'rgba(176, 130, 255, 0.8)'
+      ctx.shadowBlur = 3 * scale
+      ctx.beginPath()
+      ctx.moveTo(x1, y1)
+      ctx.lineTo(vx, vy)
+      ctx.lineTo(x2, y2)
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.shadowBlur = 0
+      for (const [cx, cy] of [
+        [x1, y1],
+        [vx, vy],
+        [x2, y2],
+      ] as const) {
+        ctx.fillStyle = '#0c0814'
+        ctx.strokeStyle = ANGLE_ENDPOINT
+        ctx.lineWidth = stroke
+        ctx.beginPath()
+        ctx.arc(cx, cy, endpointR, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+      }
+      ctx.restore()
+
+      const labelX = measurement.vertex.x
+      const labelY = measurement.vertex.y
+      drawMeasurementLabel(
+        ctx,
+        measurement.label,
+        Math.max(0.05, Math.min(0.95, labelX)) * width,
+        Math.max(0.05, Math.min(0.95, labelY)) * height,
+        'angle',
         labelFont,
       )
     } else {
