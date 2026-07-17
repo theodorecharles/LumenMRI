@@ -90,8 +90,10 @@ export function useDicomLoader() {
   const send = useCallback((message: WorkerRequest) => workerRef.current?.postMessage(message), [])
 
   // Drop in-flight worker posts and stop the worker job without clearing indexed series.
+  // Also clear pendingOnVolume so a cancelled compare load cannot stick UI busy forever.
   const cancelInFlight = useCallback(() => {
     acceptWorkerResultsRef.current = false
+    pendingOnVolumeRef.current = null
     send({ type: 'cancel' })
   }, [send])
 

@@ -238,6 +238,12 @@ export default function App() {
       // Cancel any in-flight local load-series before async fetch so volume-ready
       // / load-progress cannot overwrite the bundled volume or flip progress.
       cancelInFlight()
+      // cancelInFlight drops worker results without error — abandon in-flight compare open
+      // so compareOpeningId cannot leave busy stuck. Keep an already-applied pane B.
+      if (compareOpeningIdRef.current) {
+        compareOpeningIdRef.current = null
+        setCompareOpeningId(null)
+      }
       setCatalogError(null)
       setError(null)
       setOpeningId(selection.id)
@@ -369,6 +375,7 @@ export default function App() {
       if (!match) {
         // Browser Back to library while a bundled open is in flight.
         cancelPendingOpen()
+        clearCompare()
         setScreen('library')
         return
       }
@@ -384,6 +391,11 @@ export default function App() {
         const local = series.find((entry) => entry.id === id)
         if (local) {
           cancelPendingOpen()
+          // Primary load-series replaces any compare onVolume — drop the opening flag.
+          if (compareOpeningIdRef.current) {
+            compareOpeningIdRef.current = null
+            setCompareOpeningId(null)
+          }
           setActiveSeriesId(local.id)
           setScreen('viewer')
           loadSeries(local.id)
@@ -393,16 +405,18 @@ export default function App() {
     window.addEventListener('popstate', navigateFromHistory)
     if (bundledSeries.length && window.location.hash) navigateFromHistory()
     return () => window.removeEventListener('popstate', navigateFromHistory)
-  }, [bundledSeries, cancelPendingOpen, loadSeries, openBundledSeries, series])
+  }, [bundledSeries, cancelPendingOpen, clearCompare, loadSeries, openBundledSeries, series])
 
   const goHome = useCallback((pushHistory = true) => {
     cancelPendingOpen()
+    // Abandon in-flight / applied compare so busy cannot stick after leaving the viewer.
+    clearCompare()
     setScreen('library')
     setAutoRotate(false)
     if (pushHistory) {
       window.history.pushState({ screen: 'library' }, '', `${window.location.pathname}${window.location.search}`)
     }
-  }, [cancelPendingOpen])
+  }, [cancelPendingOpen, clearCompare])
 
   const handleFiles = useCallback(
     (files: File[]) => {
