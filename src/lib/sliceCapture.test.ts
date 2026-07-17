@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { compositeAnnotatedSlicePng, compositeAnnotatedVolumePng } from './sliceCapture'
+import {
+  compositeAnnotatedSlicePng,
+  compositeAnnotatedVolumePng,
+  compositeCompareSlicePng,
+  renderAnnotatedSliceCanvas,
+} from './sliceCapture'
 
 type DrawCall = { method: string; args: unknown[] }
 
@@ -83,7 +88,15 @@ describe('compositeAnnotatedSlicePng', () => {
           tool: 'roi',
           start: { x: 0.55, y: 0.15 },
           end: { x: 0.85, y: 0.4 },
-          label: '40 mm² · μ 48',
+          label: '40 mm² · μ 48\nσ 12 · 30–60',
+        },
+        {
+          id: 3,
+          tool: 'angle',
+          start: { x: 0.2, y: 0.5 },
+          vertex: { x: 0.45, y: 0.55 },
+          end: { x: 0.7, y: 0.35 },
+          label: '38°',
         },
       ],
     })
@@ -94,10 +107,58 @@ describe('compositeAnnotatedSlicePng', () => {
     expect(calls.some((call) => call.method === 'strokeRect')).toBe(true)
     expect(calls.some((call) => call.method === 'fillText' && call.args[0] === '12 mm')).toBe(true)
     expect(calls.some((call) => call.method === 'fillText' && call.args[0] === '40 mm² · μ 48')).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'σ 12 · 30–60')).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === '38°')).toBe(true)
     expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'A')).toBe(true)
     expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'Ax FLAIR')).toBe(true)
     expect(calls.some((call) => call.method === 'fillText' && String(call.args[0]).includes('SL 005'))).toBe(true)
     expect(calls.some((call) => call.method === 'fillText' && String(call.args[0]).includes('W 255'))).toBe(true)
+
+    createElement.mockRestore()
+  })
+
+  it('draws angle rays through the shared vertex', () => {
+    const { ctx, calls } = mockContext()
+    const createElement = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag !== 'canvas') return document.createElementNS('http://www.w3.org/1999/xhtml', tag)
+      const canvas = {
+        width: 0,
+        height: 0,
+        getContext: () => ctx,
+        toDataURL: () => 'data:image/png;base64,ANGLE',
+      }
+      return canvas as unknown as HTMLCanvasElement
+    })
+
+    const source = mockSource(100, 100)
+    const result = compositeAnnotatedSlicePng({
+      source,
+      seriesName: 'Series',
+      sliceIndex: 0,
+      sliceCount: 8,
+      window: 1,
+      level: 0.5,
+      labels: { top: 'A', right: 'L', bottom: 'P', left: 'R' },
+      measurements: [
+        {
+          id: 1,
+          tool: 'angle',
+          start: { x: 0.1, y: 0.5 },
+          vertex: { x: 0.5, y: 0.5 },
+          end: { x: 0.5, y: 0.1 },
+          label: '90°',
+        },
+      ],
+    })
+
+    expect(result).toBe('data:image/png;base64,ANGLE')
+    // Polyline path: start → vertex → end
+    expect(calls.some((call) => call.method === 'moveTo' && call.args[0] === 10 && call.args[1] === 50)).toBe(true)
+    expect(calls.some((call) => call.method === 'lineTo' && call.args[0] === 50 && call.args[1] === 50)).toBe(true)
+    expect(calls.some((call) => call.method === 'lineTo' && call.args[0] === 50 && call.args[1] === 10)).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === '90°')).toBe(true)
+    // Three endpoints
+    expect(calls.filter((call) => call.method === 'arc').length).toBeGreaterThanOrEqual(3)
 
     createElement.mockRestore()
   })
@@ -202,6 +263,103 @@ describe('compositeAnnotatedSlicePng', () => {
 
     expect(result).toBe('data:image/png;base64,SOURCE')
     createElement.mockRestore()
+  })
+})
+
+describe('renderAnnotatedSliceCanvas', () => {
+  it('returns a canvas with the annotated frame', () => {
+    const { ctx } = mockContext()
+    const createElement = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag !== 'canvas') return document.createElementNS('http://www.w3.org/1999/xhtml', tag)
+      const canvas = {
+        width: 0,
+        height: 0,
+        getContext: () => ctx,
+        toDataURL: () => 'data:image/png;base64,CANVAS',
+      }
+      return canvas as unknown as HTMLCanvasElement
+    })
+
+    const source = mockSource(64, 48)
+    const result = renderAnnotatedSliceCanvas({
+      source,
+      seriesName: 'Series',
+      sliceIndex: 0,
+      sliceCount: 4,
+      window: 1,
+      level: 0.5,
+      labels: { top: 'A', right: 'L', bottom: 'P', left: 'R' },
+      measurements: [],
+    })
+
+    expect(result).not.toBeNull()
+    expect(result?.width).toBe(64)
+    expect(result?.height).toBe(48)
+    createElement.mockRestore()
+  })
+
+  it('returns null when the source has no size', () => {
+    const source = mockSource(0, 0)
+    expect(
+      renderAnnotatedSliceCanvas({
+        source,
+        seriesName: 'Series',
+        sliceIndex: 0,
+        sliceCount: 1,
+        window: 1,
+        level: 0.5,
+        labels: { top: 'A', right: 'L', bottom: 'P', left: 'R' },
+        measurements: [],
+      }),
+    ).toBeNull()
+  })
+})
+
+describe('compositeCompareSlicePng', () => {
+  it('stitches A and B with gutter and pane badges', () => {
+    const { ctx, calls } = mockContext()
+    const createElement = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag !== 'canvas') return document.createElementNS('http://www.w3.org/1999/xhtml', tag)
+      const canvas = {
+        width: 0,
+        height: 0,
+        getContext: () => ctx,
+        toDataURL: () => 'data:image/png;base64,COMPARE',
+      }
+      return canvas as unknown as HTMLCanvasElement
+    })
+
+    const left = mockSource(80, 60)
+    const right = mockSource(100, 80)
+    const result = compositeCompareSlicePng({
+      left,
+      right,
+      gutter: 8,
+      leftLabel: 'A',
+      rightLabel: 'B',
+    })
+
+    expect(result).toBe('data:image/png;base64,COMPARE')
+    // Shared height = max(60, 80) = 80; left scaled to 80/60
+    const drawCalls = calls.filter((call) => call.method === 'drawImage')
+    expect(drawCalls.length).toBe(2)
+    expect(drawCalls[0].args[0]).toBe(left)
+    expect(drawCalls[0].args[3]).toBe(Math.round(80 * (80 / 60))) // leftW
+    expect(drawCalls[0].args[4]).toBe(80) // targetH
+    expect(drawCalls[1].args[0]).toBe(right)
+    expect(drawCalls[1].args[1]).toBe(Math.round(80 * (80 / 60)) + 8) // leftW + gutter
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'A')).toBe(true)
+    expect(calls.some((call) => call.method === 'fillText' && call.args[0] === 'B')).toBe(true)
+
+    createElement.mockRestore()
+  })
+
+  it('falls back to left-only when right has no size', () => {
+    const left = mockSource(40, 40)
+    const right = mockSource(0, 0)
+    const result = compositeCompareSlicePng({ left, right })
+    expect(result).toBe('data:image/png;base64,SOURCE')
+    expect(left.toDataURL).toHaveBeenCalled()
   })
 })
 

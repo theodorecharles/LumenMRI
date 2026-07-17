@@ -4,6 +4,7 @@ import {
   ChevronUp,
   Crop,
   Crosshair,
+  DraftingCompass,
   Maximize2,
   MousePointer2,
   Pause,
@@ -14,7 +15,8 @@ import {
   Trash2,
 } from 'lucide-react'
 import { formatProbeScalar, samplePixelAt, type PixelProbeSample } from '../lib/pixelProbe'
-import { compositeAnnotatedSlicePng } from '../lib/sliceCapture'
+import { computeRoiStats, formatRoiSummary } from '../lib/roiStats'
+import { renderAnnotatedSliceCanvas } from '../lib/sliceCapture'
 import type { CropBounds, VolumeData, VolumeSettings } from '../types'
 
 const MIN_VIEW_SCALE = 1
@@ -22,7 +24,13 @@ const MAX_VIEW_SCALE = 8
 const ZOOM_STEP = 1.12
 
 export interface SliceViewerHandle {
+  /** Download an annotated PNG of the current slice (measurements, pins, metadata). */
   capture: () => void
+  /**
+   * Build an annotated canvas for the current slice without downloading.
+   * Used by Compare layout to stitch A|B into one PNG.
+   */
+  captureAnnotatedCanvas: () => HTMLCanvasElement | null
   /** Toggle cine play/pause (no-op when stack has a single slice). */
   toggleCine: () => void
   /** Stop cine without changing the current slice (e.g. before Home/End jumps). */
@@ -72,7 +80,7 @@ type CropInteraction =
   | { type: 'move'; startX: number; startY: number; bounds: CropBounds }
   | { type: 'resize'; corner: 'nw' | 'ne' | 'sw' | 'se'; bounds: CropBounds }
 
-type MeasurementTool = 'distance' | 'roi'
+type MeasurementTool = 'distance' | 'roi' | 'angle'
 
 interface MeasurementPoint {
   x: number
@@ -85,6 +93,15 @@ interface Measurement {
   slice: number
   start: MeasurementPoint
   end: MeasurementPoint
+  /** Shared vertex for angle (start—vertex—end). */
+  vertex?: MeasurementPoint
+}
+
+/** In-progress three-click angle build (mirrors draft; ref avoids stale multi-click). */
+interface AngleBuild {
+  slice: number
+  start: MeasurementPoint
+  vertex?: MeasurementPoint
 }
 
 interface PinnedProbe {
@@ -154,12 +171,45 @@ function orientationLabels(orientation: string) {
   return { top: 'A', right: 'L', bottom: 'P', left: 'R' }
 }
 
+function angleArmPixels(
+  from: MeasurementPoint,
+  to: MeasurementPoint,
+  width: number,
+  height: number,
+) {
+  return Math.hypot((to.x - from.x) * width, (to.y - from.y) * height)
+}
+
+function angleIsLargeEnough(measurement: Measurement, width: number, height: number) {
+  if (!measurement.vertex) return false
+  return (
+    angleArmPixels(measurement.start, measurement.vertex, width, height) >= 3
+    && angleArmPixels(measurement.end, measurement.vertex, width, height) >= 3
+  )
+}
+
 function measurementSummary(
   measurement: Measurement,
   volume: VolumeData,
   width: number,
   height: number,
 ) {
+  if (measurement.tool === 'angle') {
+    if (!measurement.vertex) return ''
+    const spanX = Math.max(1, width - 1) * volume.spacing[0]
+    const spanY = Math.max(1, height - 1) * volume.spacing[1]
+    const ax = (measurement.start.x - measurement.vertex.x) * spanX
+    const ay = (measurement.start.y - measurement.vertex.y) * spanY
+    const bx = (measurement.end.x - measurement.vertex.x) * spanX
+    const by = (measurement.end.y - measurement.vertex.y) * spanY
+    const magA = Math.hypot(ax, ay)
+    const magB = Math.hypot(bx, by)
+    if (magA < 1e-9 || magB < 1e-9) return ''
+    const cos = Math.max(-1, Math.min(1, (ax * bx + ay * by) / (magA * magB)))
+    const degrees = (Math.acos(cos) * 180) / Math.PI
+    return `${degrees < 10 ? degrees.toFixed(1) : degrees.toFixed(0)}°`
+  }
+
   const deltaX = (measurement.end.x - measurement.start.x) * Math.max(1, width - 1)
   const deltaY = (measurement.end.y - measurement.start.y) * Math.max(1, height - 1)
   if (measurement.tool === 'distance') {
@@ -167,22 +217,17 @@ function measurementSummary(
     return `${millimeters < 10 ? millimeters.toFixed(1) : millimeters.toFixed(0)} mm`
   }
 
-  const minPixelX = Math.max(0, Math.min(width - 1, Math.floor(Math.min(measurement.start.x, measurement.end.x) * width)))
-  const maxPixelX = Math.max(minPixelX, Math.min(width - 1, Math.ceil(Math.max(measurement.start.x, measurement.end.x) * width) - 1))
-  const minPixelY = Math.max(0, Math.min(height - 1, Math.floor(Math.min(measurement.start.y, measurement.end.y) * height)))
-  const maxPixelY = Math.max(minPixelY, Math.min(height - 1, Math.ceil(Math.max(measurement.start.y, measurement.end.y) * height) - 1))
-  let signal = 0
-  let count = 0
-  const sliceOffset = measurement.slice * width * height
-  for (let y = minPixelY; y <= maxPixelY; y += 1) {
-    for (let x = minPixelX; x <= maxPixelX; x += 1) {
-      signal += volume.data[sliceOffset + y * width + x]
-      count += 1
-    }
-  }
-  const area = count * volume.spacing[0] * volume.spacing[1]
-  const mean = count ? signal / count : 0
-  return `${area < 100 ? area.toFixed(1) : area.toFixed(0)} mm² · μ ${mean.toFixed(0)}`
+  const stats = computeRoiStats(
+    volume,
+    {
+      start: measurement.start,
+      end: measurement.end,
+      slice: measurement.slice,
+    },
+    width,
+    height,
+  )
+  return formatRoiSummary(stats)
 }
 
 export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
@@ -207,6 +252,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const interactionRef = useRef<PointerInteraction | null>(null)
     const measurementIdRef = useRef(0)
     const probeIdRef = useRef(0)
+    const angleBuildRef = useRef<AngleBuild | null>(null)
     const sliceIndexRef = useRef(sliceIndex)
     const viewRef = useRef<ViewTransform>(FIT_VIEW)
     const [canvasRect, setCanvasRect] = useState<CanvasRect | null>(null)
@@ -248,10 +294,10 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
 
     useImperativeHandle(
       forwardedRef,
-      () => ({
-        capture: () => {
+      () => {
+        const captureAnnotatedCanvas = (): HTMLCanvasElement | null => {
           const canvas = canvasRef.current
-          if (!canvas) return
+          if (!canvas) return null
           const current = measurements.filter((measurement) => measurement.slice === safeIndex)
           const visible = measurementDraft?.slice === safeIndex
             ? [...current, measurementDraft]
@@ -269,9 +315,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                 : `I ${probe.sample.intensity}`,
               coordsLabel: `c ${probe.sample.col} · r ${probe.sample.row}`,
             }))
-          const link = document.createElement('a')
-          link.download = `lumen-${volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-slice-${safeIndex + 1}.png`
-          link.href = compositeAnnotatedSlicePng({
+          return renderAnnotatedSliceCanvas({
             source: canvas,
             seriesName: volume.description,
             sliceIndex: safeIndex,
@@ -284,15 +328,27 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
               tool: measurement.tool,
               start: measurement.start,
               end: measurement.end,
+              ...(measurement.vertex ? { vertex: measurement.vertex } : null),
               label: measurementSummary(measurement, volume, width, height),
             })),
             pinnedProbes: pins,
           })
-          link.click()
-        },
-        toggleCine,
-        pauseCine,
-      }),
+        }
+
+        return {
+          captureAnnotatedCanvas,
+          capture: () => {
+            const annotated = captureAnnotatedCanvas()
+            if (!annotated) return
+            const link = document.createElement('a')
+            link.download = `lumen-${volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-slice-${safeIndex + 1}.png`
+            link.href = annotated.toDataURL('image/png')
+            link.click()
+          },
+          toggleCine,
+          pauseCine,
+        }
+      },
       [
         depth,
         height,
@@ -361,6 +417,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       setProbeTool(false)
       setProbeHover(null)
       setPinnedProbes([])
+      angleBuildRef.current = null
       interactionRef.current = null
       setCinePlaying(false)
       setView(FIT_VIEW)
@@ -377,6 +434,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
 
     useEffect(() => {
       setMeasurementDraft(null)
+      angleBuildRef.current = null
       setProbeHover(null)
       if (interactionRef.current?.type === 'measurement') interactionRef.current = null
     }, [safeIndex])
@@ -523,6 +581,53 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         event.preventDefault()
         return
       }
+      if (measurementTool === 'angle') {
+        // Three clicks: arm end → vertex → arm end. Ref tracks progress across events.
+        setProbeHover(null)
+        event.preventDefault()
+        const build = angleBuildRef.current
+        if (!build || build.slice !== safeIndex) {
+          angleBuildRef.current = { slice: safeIndex, start: point }
+          setMeasurementDraft({
+            id: -1,
+            tool: 'angle',
+            slice: safeIndex,
+            start: point,
+            end: point,
+          })
+          return
+        }
+        if (!build.vertex) {
+          angleBuildRef.current = { ...build, vertex: point }
+          setMeasurementDraft({
+            id: -1,
+            tool: 'angle',
+            slice: safeIndex,
+            start: build.start,
+            vertex: point,
+            end: point,
+          })
+          return
+        }
+        const final: Measurement = {
+          id: -1,
+          tool: 'angle',
+          slice: safeIndex,
+          start: build.start,
+          vertex: build.vertex,
+          end: point,
+        }
+        if (angleIsLargeEnough(final, width, height)) {
+          measurementIdRef.current += 1
+          setMeasurements((current) => [...current, {
+            ...final,
+            id: measurementIdRef.current,
+          }])
+        }
+        angleBuildRef.current = null
+        setMeasurementDraft(null)
+        return
+      }
       if (measurementTool) {
         const draft: Measurement = {
           id: -1,
@@ -577,6 +682,13 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const updateInteraction = (event: React.PointerEvent<HTMLDivElement>) => {
       const interaction = interactionRef.current
       if (!interaction) {
+        if (angleBuildRef.current || measurementDraft?.tool === 'angle') {
+          const point = cropPoint(event)
+          setMeasurementDraft((prev) => (
+            prev?.tool === 'angle' ? { ...prev, end: point } : prev
+          ))
+          return
+        }
         updateProbeHover(event)
         return
       }
@@ -676,6 +788,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const cancelInteraction = () => {
       if (interactionRef.current?.type === 'pan') setPanning(false)
       interactionRef.current = null
+      angleBuildRef.current = null
       setMeasurementDraft(null)
       setWindowLevelDrag(null)
       setProbeHover(null)
@@ -709,6 +822,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       const next = measurementTool === tool ? null : tool
       setMeasurementTool(next)
       setMeasurementDraft(null)
+      angleBuildRef.current = null
       setProbeTool(false)
       interactionRef.current = null
       if (next) onCropEditingChange(false)
@@ -719,6 +833,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       setProbeTool(next)
       setMeasurementTool(null)
       setMeasurementDraft(null)
+      angleBuildRef.current = null
       interactionRef.current = null
       if (next) onCropEditingChange(false)
     }
@@ -806,13 +921,39 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                         const y1 = measurement.start.y * height
                         const x2 = measurement.end.x * width
                         const y2 = measurement.end.y * height
-                        return measurement.tool === 'distance' ? (
-                          <g key={measurement.id} className="distance-measurement">
-                            <line x1={x1} y1={y1} x2={x2} y2={y2} />
-                            <circle cx={x1} cy={y1} r="3.5" />
-                            <circle cx={x2} cy={y2} r="3.5" />
-                          </g>
-                        ) : (
+                        if (measurement.tool === 'distance') {
+                          return (
+                            <g key={measurement.id} className="distance-measurement">
+                              <line x1={x1} y1={y1} x2={x2} y2={y2} />
+                              <circle cx={x1} cy={y1} r="3.5" />
+                              <circle cx={x2} cy={y2} r="3.5" />
+                            </g>
+                          )
+                        }
+                        if (measurement.tool === 'angle') {
+                          const vx = (measurement.vertex?.x ?? measurement.end.x) * width
+                          const vy = (measurement.vertex?.y ?? measurement.end.y) * height
+                          return (
+                            <g key={measurement.id} className="angle-measurement">
+                              {measurement.vertex ? (
+                                <>
+                                  <line x1={x1} y1={y1} x2={vx} y2={vy} />
+                                  <line x1={vx} y1={vy} x2={x2} y2={y2} />
+                                  <circle cx={x1} cy={y1} r="3.5" />
+                                  <circle cx={vx} cy={vy} r="3.5" />
+                                  <circle cx={x2} cy={y2} r="3.5" />
+                                </>
+                              ) : (
+                                <>
+                                  <line x1={x1} y1={y1} x2={x2} y2={y2} />
+                                  <circle cx={x1} cy={y1} r="3.5" />
+                                  <circle cx={x2} cy={y2} r="3.5" />
+                                </>
+                              )}
+                            </g>
+                          )
+                        }
+                        return (
                           <rect
                             key={measurement.id}
                             className="roi-measurement"
@@ -825,12 +966,18 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                       })}
                     </svg>
                     {visibleMeasurements.map((measurement) => {
+                      const summary = measurementSummary(measurement, volume, width, height)
+                      if (!summary) return null
                       const labelX = measurement.tool === 'distance'
                         ? (measurement.start.x + measurement.end.x) * 0.5
-                        : Math.max(measurement.start.x, measurement.end.x)
+                        : measurement.tool === 'angle'
+                          ? (measurement.vertex?.x ?? measurement.end.x)
+                          : Math.max(measurement.start.x, measurement.end.x)
                       const labelY = measurement.tool === 'distance'
                         ? (measurement.start.y + measurement.end.y) * 0.5
-                        : Math.min(measurement.start.y, measurement.end.y)
+                        : measurement.tool === 'angle'
+                          ? (measurement.vertex?.y ?? measurement.end.y)
+                          : Math.min(measurement.start.y, measurement.end.y)
                       return (
                         <span
                           key={`label-${measurement.id}`}
@@ -840,7 +987,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                             top: `${Math.max(0.05, Math.min(0.95, labelY)) * 100}%`,
                           }}
                         >
-                          {measurementSummary(measurement, volume, width, height)}
+                          {summary}
                         </span>
                       )
                     })}
@@ -928,10 +1075,20 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
               className={measurementTool === 'roi' ? 'active' : ''}
               aria-label="ROI area measurement"
               aria-pressed={measurementTool === 'roi'}
-              title="Measure ROI area and mean signal"
+              title="Measure ROI area, mean, SD, min–max"
               onClick={() => selectMeasurementTool('roi')}
             >
               <SquareDashed size={14} /><span>ROI</span>
+            </button>
+            <button
+              type="button"
+              className={measurementTool === 'angle' ? 'active' : ''}
+              aria-label="Angle measurement"
+              aria-pressed={measurementTool === 'angle'}
+              title="Measure angle between two rays (three clicks)"
+              onClick={() => selectMeasurementTool('angle')}
+            >
+              <DraftingCompass size={14} /><span>Angle</span>
             </button>
             <button
               type="button"
@@ -1045,6 +1202,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                 onClick={() => {
                   setMeasurementTool(null)
                   setMeasurementDraft(null)
+                  angleBuildRef.current = null
                   setProbeTool(false)
                   onCropEditingChange(!cropEditing)
                 }}

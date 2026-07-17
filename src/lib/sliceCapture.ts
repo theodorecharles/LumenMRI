@@ -1,4 +1,4 @@
-export type CaptureMeasurementTool = 'distance' | 'roi'
+export type CaptureMeasurementTool = 'distance' | 'roi' | 'angle'
 
 export interface CapturePoint {
   x: number
@@ -10,6 +10,8 @@ export interface CaptureMeasurement {
   tool: CaptureMeasurementTool
   start: CapturePoint
   end: CapturePoint
+  /** Shared vertex for angle (start—vertex—end rays). Required when tool is `angle`. */
+  vertex?: CapturePoint
   label: string
 }
 
@@ -59,6 +61,8 @@ const DISTANCE_STROKE = '#68efff'
 const DISTANCE_ENDPOINT = '#b9f9ff'
 const ROI_STROKE = '#ffb263'
 const ROI_FILL = 'rgba(255, 170, 91, 0.08)'
+const ANGLE_STROKE = '#c4a0ff'
+const ANGLE_ENDPOINT = '#e4d4ff'
 const LABEL_BG = 'rgba(3, 12, 17, 0.9)'
 const MARKER_BG = 'rgba(4, 12, 17, 0.78)'
 const META_DIM = '#718991'
@@ -98,25 +102,39 @@ function drawMeasurementLabel(
 ) {
   ctx.save()
   ctx.font = `${fontSize}px "DM Mono", ui-monospace, monospace`
+  const lines = text.split('\n')
   const paddingX = fontSize * 0.55
   const paddingY = fontSize * 0.4
-  const metrics = ctx.measureText(text)
-  const boxW = metrics.width + paddingX * 2
-  const boxH = fontSize + paddingY * 2
+  const lineGap = fontSize * 0.2
+  let maxLineW = 0
+  for (const line of lines) {
+    maxLineW = Math.max(maxLineW, ctx.measureText(line).width)
+  }
+  const boxW = maxLineW + paddingX * 2
+  const boxH = lines.length * fontSize + Math.max(0, lines.length - 1) * lineGap + paddingY * 2
   const boxX = x - boxW / 2
   const boxY = y - boxH - fontSize * 0.55
 
   ctx.fillStyle = LABEL_BG
-  ctx.strokeStyle = tool === 'roi' ? 'rgba(255, 178, 99, 0.56)' : 'rgba(104, 239, 255, 0.48)'
+  ctx.strokeStyle =
+    tool === 'roi'
+      ? 'rgba(255, 178, 99, 0.56)'
+      : tool === 'angle'
+        ? 'rgba(196, 160, 255, 0.55)'
+        : 'rgba(104, 239, 255, 0.48)'
   ctx.lineWidth = Math.max(1, fontSize * 0.08)
   roundRect(ctx, boxX, boxY, boxW, boxH, Math.max(2, fontSize * 0.35))
   ctx.fill()
   ctx.stroke()
 
-  ctx.fillStyle = tool === 'roi' ? '#ffe0bd' : '#d9fbff'
+  ctx.fillStyle =
+    tool === 'roi' ? '#ffe0bd' : tool === 'angle' ? '#efe4ff' : '#d9fbff'
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'center'
-  ctx.fillText(text, x, boxY + boxH / 2)
+  const firstBaseline = boxY + paddingY + fontSize / 2
+  for (let i = 0; i < lines.length; i += 1) {
+    ctx.fillText(lines[i]!, x, firstBaseline + i * (fontSize + lineGap))
+  }
   ctx.restore()
 }
 
@@ -291,21 +309,23 @@ function drawVolumeMetadataStrip(
 }
 
 /**
- * Composite the intensity canvas with measurement overlays, pinned probes,
- * orientation markers, and a thin metadata strip into a PNG data URL.
+ * Draw intensity + measurements, pins, orientation markers, and metadata strip
+ * onto a new canvas. Returns null when the source is empty or 2d context fails.
  * Pins are never on the bare source canvas — only this composite path.
  */
-export function compositeAnnotatedSlicePng(input: AnnotatedSliceCaptureInput): string {
+export function renderAnnotatedSliceCanvas(
+  input: AnnotatedSliceCaptureInput,
+): HTMLCanvasElement | null {
   const { source } = input
   const width = source.width
   const height = source.height
-  if (!width || !height) return source.toDataURL('image/png')
+  if (!width || !height) return null
 
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
   const ctx = canvas.getContext('2d')
-  if (!ctx) return source.toDataURL('image/png')
+  if (!ctx) return null
 
   ctx.drawImage(source, 0, 0)
 
@@ -357,6 +377,47 @@ export function compositeAnnotatedSlicePng(input: AnnotatedSliceCaptureInput): s
         'distance',
         labelFont,
       )
+    } else if (measurement.tool === 'angle' && measurement.vertex) {
+      const vx = measurement.vertex.x * width
+      const vy = measurement.vertex.y * height
+      ctx.save()
+      ctx.strokeStyle = ANGLE_STROKE
+      ctx.lineWidth = stroke
+      ctx.setLineDash([4 * scale, 2 * scale])
+      ctx.shadowColor = 'rgba(176, 130, 255, 0.8)'
+      ctx.shadowBlur = 3 * scale
+      ctx.beginPath()
+      ctx.moveTo(x1, y1)
+      ctx.lineTo(vx, vy)
+      ctx.lineTo(x2, y2)
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.shadowBlur = 0
+      for (const [cx, cy] of [
+        [x1, y1],
+        [vx, vy],
+        [x2, y2],
+      ] as const) {
+        ctx.fillStyle = '#0c0814'
+        ctx.strokeStyle = ANGLE_ENDPOINT
+        ctx.lineWidth = stroke
+        ctx.beginPath()
+        ctx.arc(cx, cy, endpointR, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+      }
+      ctx.restore()
+
+      const labelX = measurement.vertex.x
+      const labelY = measurement.vertex.y
+      drawMeasurementLabel(
+        ctx,
+        measurement.label,
+        Math.max(0.05, Math.min(0.95, labelX)) * width,
+        Math.max(0.05, Math.min(0.95, labelY)) * height,
+        'angle',
+        labelFont,
+      )
     } else {
       const rx = Math.min(x1, x2)
       const ry = Math.min(y1, y2)
@@ -399,6 +460,106 @@ export function compositeAnnotatedSlicePng(input: AnnotatedSliceCaptureInput): s
   drawOrientationMarker(ctx, input.labels.right, width - edgePad - markerSize / 2, height / 2, markerSize)
 
   drawMetadataStrip(ctx, input, scale)
+
+  return canvas
+}
+
+/**
+ * Composite the intensity canvas with measurement overlays, pinned probes,
+ * orientation markers, and a thin metadata strip into a PNG data URL.
+ */
+export function compositeAnnotatedSlicePng(input: AnnotatedSliceCaptureInput): string {
+  const canvas = renderAnnotatedSliceCanvas(input)
+  if (!canvas) return input.source.toDataURL('image/png')
+  return canvas.toDataURL('image/png')
+}
+
+export interface CompareSliceCaptureInput {
+  left: HTMLCanvasElement
+  right: HTMLCanvasElement
+  /** Dark strip between panes. Default 8. */
+  gutter?: number
+  leftLabel?: string
+  rightLabel?: string
+}
+
+function drawPaneBadge(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  scale: number,
+) {
+  const fontSize = Math.max(11, Math.round(13 * scale))
+  const padX = Math.max(6, Math.round(8 * scale))
+  const padY = Math.max(3, Math.round(4 * scale))
+  ctx.save()
+  ctx.font = `600 ${fontSize}px "DM Mono", ui-monospace, monospace`
+  const metrics = ctx.measureText(text)
+  const boxW = metrics.width + padX * 2
+  const boxH = fontSize + padY * 2
+  ctx.fillStyle = 'rgba(3, 12, 17, 0.88)'
+  ctx.strokeStyle = 'rgba(82, 207, 229, 0.55)'
+  ctx.lineWidth = Math.max(1, 1 * scale)
+  roundRect(ctx, x, y, boxW, boxH, Math.max(3, 4 * scale))
+  ctx.fill()
+  ctx.stroke()
+  ctx.fillStyle = '#7ee8f5'
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, x + padX, y + boxH / 2 + 0.5)
+  ctx.restore()
+}
+
+/**
+ * Stitch two already-annotated pane canvases into one PNG (A | gutter | B).
+ * Scales both panes to a shared height (taller wins); letterboxes with black if
+ * widths would otherwise mismatch after scale. Falls back to left-only if right
+ * has no size.
+ */
+export function compositeCompareSlicePng(input: CompareSliceCaptureInput): string {
+  const { left, right } = input
+  const gutter = Math.max(0, Math.round(input.gutter ?? 8))
+  const leftLabel = input.leftLabel ?? 'A'
+  const rightLabel = input.rightLabel ?? 'B'
+
+  if (!left.width || !left.height) {
+    return left.toDataURL('image/png')
+  }
+  if (!right.width || !right.height) {
+    return left.toDataURL('image/png')
+  }
+
+  const targetH = Math.max(left.height, right.height)
+  const leftScale = targetH / left.height
+  const rightScale = targetH / right.height
+  const leftW = Math.max(1, Math.round(left.width * leftScale))
+  const rightW = Math.max(1, Math.round(right.width * rightScale))
+
+  const canvas = document.createElement('canvas')
+  canvas.width = leftW + gutter + rightW
+  canvas.height = targetH
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return left.toDataURL('image/png')
+
+  ctx.fillStyle = '#02080b'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+  ctx.drawImage(left, 0, 0, leftW, targetH)
+  if (gutter > 0) {
+    ctx.fillStyle = '#0a1418'
+    ctx.fillRect(leftW, 0, gutter, targetH)
+    // Thin accent line in the gutter
+    ctx.fillStyle = 'rgba(82, 207, 229, 0.28)'
+    const mid = leftW + gutter / 2
+    ctx.fillRect(mid - 0.5, 0, 1, targetH)
+  }
+  ctx.drawImage(right, leftW + gutter, 0, rightW, targetH)
+
+  const badgeScale = Math.max(0.75, targetH / 360)
+  const badgePad = Math.max(8, Math.round(10 * badgeScale))
+  drawPaneBadge(ctx, leftLabel, badgePad, badgePad, badgeScale)
+  drawPaneBadge(ctx, rightLabel, leftW + gutter + badgePad, badgePad, badgeScale)
 
   return canvas.toDataURL('image/png')
 }
