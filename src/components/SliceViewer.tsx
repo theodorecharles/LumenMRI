@@ -14,7 +14,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { formatProbeScalar, samplePixelAt, type PixelProbeSample } from '../lib/pixelProbe'
-import { compositeAnnotatedSlicePng } from '../lib/sliceCapture'
+import { renderAnnotatedSliceCanvas } from '../lib/sliceCapture'
 import type { CropBounds, VolumeData, VolumeSettings } from '../types'
 
 const MIN_VIEW_SCALE = 1
@@ -22,7 +22,13 @@ const MAX_VIEW_SCALE = 8
 const ZOOM_STEP = 1.12
 
 export interface SliceViewerHandle {
+  /** Download an annotated PNG of the current slice (measurements, pins, metadata). */
   capture: () => void
+  /**
+   * Build an annotated canvas for the current slice without downloading.
+   * Used by Compare layout to stitch A|B into one PNG.
+   */
+  captureAnnotatedCanvas: () => HTMLCanvasElement | null
   /** Toggle cine play/pause (no-op when stack has a single slice). */
   toggleCine: () => void
   /** Stop cine without changing the current slice (e.g. before Home/End jumps). */
@@ -248,10 +254,10 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
 
     useImperativeHandle(
       forwardedRef,
-      () => ({
-        capture: () => {
+      () => {
+        const captureAnnotatedCanvas = (): HTMLCanvasElement | null => {
           const canvas = canvasRef.current
-          if (!canvas) return
+          if (!canvas) return null
           const current = measurements.filter((measurement) => measurement.slice === safeIndex)
           const visible = measurementDraft?.slice === safeIndex
             ? [...current, measurementDraft]
@@ -269,9 +275,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                 : `I ${probe.sample.intensity}`,
               coordsLabel: `c ${probe.sample.col} · r ${probe.sample.row}`,
             }))
-          const link = document.createElement('a')
-          link.download = `lumen-${volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-slice-${safeIndex + 1}.png`
-          link.href = compositeAnnotatedSlicePng({
+          return renderAnnotatedSliceCanvas({
             source: canvas,
             seriesName: volume.description,
             sliceIndex: safeIndex,
@@ -288,11 +292,22 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
             })),
             pinnedProbes: pins,
           })
-          link.click()
-        },
-        toggleCine,
-        pauseCine,
-      }),
+        }
+
+        return {
+          captureAnnotatedCanvas,
+          capture: () => {
+            const annotated = captureAnnotatedCanvas()
+            if (!annotated) return
+            const link = document.createElement('a')
+            link.download = `lumen-${volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-slice-${safeIndex + 1}.png`
+            link.href = annotated.toDataURL('image/png')
+            link.click()
+          },
+          toggleCine,
+          pauseCine,
+        }
+      },
       [
         depth,
         height,

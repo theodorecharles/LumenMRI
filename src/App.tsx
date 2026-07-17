@@ -24,6 +24,7 @@ import {
 import { useDicomLoader } from './hooks/useDicomLoader'
 import { useVolumeReconstruction } from './hooks/useVolumeReconstruction'
 import { chooseDirectory, filesFromDrop } from './lib/fileAccess'
+import { compositeCompareSlicePng } from './lib/sliceCapture'
 import { createDemoVolume, mapRelativeSliceIndex, midSliceIndex } from './lib/volume'
 import {
   bundledSeriesSummary,
@@ -588,9 +589,31 @@ export default function App() {
   }, [screen])
 
   const captureActiveView = useCallback(() => {
-    if (viewerLayout === 'slice' || viewerLayout === 'compare') sliceViewerRef.current?.capture()
+    if (viewerLayout === 'compare') {
+      const left = sliceViewerRef.current?.captureAnnotatedCanvas()
+      if (!left) return
+      const right = compareVolume ? compareSliceViewerRef.current?.captureAnnotatedCanvas() : null
+      const link = document.createElement('a')
+      if (right) {
+        const leftSlug = volume
+          ? volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+          : 'pane-a'
+        const rightSlug = compareVolume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+        link.download = `lumen-compare-${leftSlug}-vs-${rightSlug}.png`
+        link.href = compositeCompareSlicePng({ left, right, leftLabel: 'A', rightLabel: 'B' })
+      } else {
+        const slug = volume
+          ? volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+          : 'pane-a'
+        link.download = `lumen-${slug}-slice-${sliceIndex + 1}.png`
+        link.href = left.toDataURL('image/png')
+      }
+      link.click()
+      return
+    }
+    if (viewerLayout === 'slice') sliceViewerRef.current?.capture()
     else viewerRef.current?.capture()
-  }, [viewerLayout])
+  }, [compareVolume, sliceIndex, viewerLayout, volume])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
