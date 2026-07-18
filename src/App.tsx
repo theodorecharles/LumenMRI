@@ -592,13 +592,14 @@ export default function App() {
     if (viewerLayout === 'compare') {
       const left = sliceViewerRef.current?.captureAnnotatedCanvas()
       if (!left) return
-      const right = compareVolume ? compareSliceViewerRef.current?.captureAnnotatedCanvas() : null
+      const volB = compareVolume
+      const right = volB ? compareSliceViewerRef.current?.captureAnnotatedCanvas() : null
       const link = document.createElement('a')
-      if (right) {
+      if (volB && right) {
         const leftSlug = volume
           ? volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
           : 'pane-a'
-        const rightSlug = compareVolume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+        const rightSlug = volB.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
         link.download = `lumen-compare-${leftSlug}-vs-${rightSlug}.png`
         link.href = compositeCompareSlicePng({ left, right, leftLabel: 'A', rightLabel: 'B' })
       } else {
