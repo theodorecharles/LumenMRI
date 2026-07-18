@@ -22,6 +22,7 @@ export const SHORTCUT_SECTIONS: ShortcutSection[] = [
       { keys: [['1']], label: '3D volume' },
       { keys: [['2']], label: '2D slice' },
       { keys: [['3']], label: 'Linked split view' },
+      { keys: [['4']], label: 'Compare' },
     ],
   },
   {
@@ -29,6 +30,8 @@ export const SHORTCUT_SECTIONS: ShortcutSection[] = [
     entries: [
       { keys: [['↑'], [',']], label: 'Previous slice' },
       { keys: [['↓'], ['.']], label: 'Next slice' },
+      { keys: [['Home'], ['End']], label: 'First / last slice (pauses cine)' },
+      { keys: [['Space']], label: 'Toggle cine play (2D and split layouts)' },
       { keys: [['Scroll']], label: 'Step through slices' },
       { keys: [['Ctrl', 'Scroll']], label: 'Zoom 2D (⌘ on Mac)' },
       { keys: [['Drag']], label: 'Pan when zoomed' },
@@ -51,6 +54,10 @@ export const SHORTCUT_SECTIONS: ShortcutSection[] = [
       { keys: [['RMB', 'Drag']], label: 'Window / level (2D)' },
       { keys: [['Drag']], label: 'Orbit 3D volume' },
       { keys: [['Scroll']], label: 'Zoom 3D volume' },
+      {
+        keys: [['Alt', 'Click']],
+        label: 'Set linked 2D slice from volume pick (Slice plane on, or Split layout)',
+      },
     ],
   },
 ]

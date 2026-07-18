@@ -2342,6 +2342,19 @@ button:disabled {
   filter: drop-shadow(0 0 2px rgba(255, 147, 72, 0.75));
 }
 
+.angle-measurement line {
+  stroke: #c4a0ff;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 2;
+  filter: drop-shadow(0 0 2px rgba(176, 130, 255, 0.85));
+}
+
+.angle-measurement circle {
+  fill: #0c0814;
+  stroke: #e4d4ff;
+  stroke-width: 1.5;
+}
+
 .measurement-label {
   position: absolute;
   z-index: 5;
@@ -2350,18 +2363,24 @@ button:disabled {
   color: #d9fbff;
   font-family: 'DM Mono', monospace;
   font-size: 8px;
-  line-height: 1;
-  white-space: nowrap;
+  line-height: 1.25;
+  white-space: pre;
   border: 1px solid rgba(104, 239, 255, 0.48);
   border-radius: 4px;
   background: rgba(3, 12, 17, 0.9);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.42);
   pointer-events: none;
+  text-align: center;
 }
 
 .measurement-label.roi {
   color: #ffe0bd;
   border-color: rgba(255, 178, 99, 0.56);
+}
+
+.measurement-label.angle {
+  color: #efe4ff;
+  border-color: rgba(196, 160, 255, 0.55);
 }
 
 .measurement-toolbar {
@@ -2409,6 +2428,12 @@ button:disabled {
 }
 
 .measurement-toolbar button:nth-child(3).active {
+  color: #efe4ff;
+  border-color: rgba(196, 160, 255, 0.35);
+  background: rgba(160, 120, 255, 0.12);
+}
+
+.measurement-toolbar button:nth-child(4).active {
   color: #d8ffe8;
   border-color: rgba(110, 240, 190, 0.35);
   background: rgba(72, 210, 150, 0.12);

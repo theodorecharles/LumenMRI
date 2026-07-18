@@ -217,12 +217,23 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
   }
   await expect(page.locator('.measurement-label.roi')).toContainText('mm²')
   await expect(page.locator('.measurement-label.roi')).toContainText('μ')
+  await expect(page.locator('.measurement-label.roi')).toContainText('σ')
+  await expect(page.locator('.measurement-label.roi')).toContainText('–')
+  await page.getByRole('button', { name: 'Angle measurement' }).click()
+  await expect(page.getByRole('button', { name: 'Angle measurement' })).toHaveAttribute('aria-pressed', 'true')
+  if (cropBox) {
+    // Three clicks: arm end → vertex → arm end (≈90° L shape).
+    await page.mouse.click(cropBox.x + cropBox.width * 0.28, cropBox.y + cropBox.height * 0.55)
+    await page.mouse.click(cropBox.x + cropBox.width * 0.5, cropBox.y + cropBox.height * 0.55)
+    await page.mouse.click(cropBox.x + cropBox.width * 0.5, cropBox.y + cropBox.height * 0.28)
+  }
+  await expect(page.locator('.measurement-label.angle')).toContainText('°')
   await page.screenshot({ path: 'artifacts/linked-split-view.png', fullPage: true })
   await page.getByRole('button', { name: 'Clear measurements on slice' }).click()
   await expect(page.locator('.measurement-label')).toHaveCount(0)
   // Deselect active measure tool so plain left-drag is free; shift-drag still owns W/L.
-  await page.getByRole('button', { name: 'ROI area measurement' }).click()
-  await expect(page.getByRole('button', { name: 'ROI area measurement' })).toHaveAttribute('aria-pressed', 'false')
+  await page.getByRole('button', { name: 'Angle measurement' }).click()
+  await expect(page.getByRole('button', { name: 'Angle measurement' })).toHaveAttribute('aria-pressed', 'false')
 
   const windowSlider = page.getByRole('slider', { name: 'Window' })
   const levelSlider = page.getByRole('slider', { name: 'Level' })
@@ -353,6 +364,7 @@ test('keeps the library and 2D viewer usable on a mobile viewport', async ({ pag
   await expect(page.getByTestId('slice-canvas')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Distance measurement' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'ROI area measurement' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Angle measurement' })).toBeVisible()
   await page.screenshot({ path: 'artifacts/mobile-slice-view.png', fullPage: true })
 })
 
