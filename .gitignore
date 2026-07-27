@@ -7,3 +7,4 @@ test-results/
 *.tsbuildinfo
 .DS_Store
 .npm-cache/
+.env
