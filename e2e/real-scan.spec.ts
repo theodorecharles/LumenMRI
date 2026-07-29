@@ -1,6 +1,54 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { reconstructionOptionsForDevice } from '../src/lib/reconstructVolume'
+
+interface ResliceExpectation {
+  /** Reslice pixel dimensions as [width, height]. */
+  coronal: [number, number]
+  sagittal: [number, number]
+  /** In-plane spacing of the reconstructed volume, in millimetres. */
+  inPlaneSpacing: number
+}
+
+const FLAIR_SLICE_SPACING = 3.9999764740342947
+const FLAIR_SOURCE_WIDTH = 416
+const FLAIR_IN_PLANE_SPACING = 0.4492
+
+/**
+ * Exact MPR reslice dimensions for Brain MRI · AX FLAIR (416 × 512 × 38, 0.4492 mm
+ * in-plane, 4 mm slices), keyed by the reconstruction budget the app picks for the host.
+ * The compact budget caps in-plane pixels at 384, so a 4-core machine reslices the same
+ * geometry at a lower resolution than an 8-core one. Coronal is [width, depth] and
+ * sagittal is [height, depth] of the reconstructed volume.
+ */
+const FLAIR_RESLICES: Record<number, ResliceExpectation> = {
+  512: {
+    coronal: [416, 149],
+    sagittal: [512, 149],
+    inPlaneSpacing: FLAIR_IN_PLANE_SPACING,
+  },
+  384: {
+    coronal: [312, 149],
+    sagittal: [384, 149],
+    inPlaneSpacing: (FLAIR_IN_PLANE_SPACING * FLAIR_SOURCE_WIDTH) / 312,
+  },
+}
+
+/** Resolve the reslice expectation for the budget this browser will actually use. */
+async function flairResliceExpectation(page: Page): Promise<ResliceExpectation> {
+  const { maxDimension } = reconstructionOptionsForDevice(
+    await page.evaluate(() => ({
+      compactViewport: window.matchMedia('(max-width: 690px)').matches,
+      hardwareConcurrency: navigator.hardwareConcurrency,
+    })),
+  )
+  const expectation = FLAIR_RESLICES[maxDimension]
+  if (!expectation) {
+    throw new Error(`No AX FLAIR reslice expectation for maxDimension ${maxDimension}`)
+  }
+  return expectation
+}
 
 test('opens the complete scan library and links 2D and 3D views', async ({ page }) => {
   const pageErrors: string[] = []
@@ -319,6 +367,7 @@ test('switches one 2D stack across orthogonal MPR planes', async ({ page }) => {
   page.on('pageerror', (error) => pageErrors.push(error.message))
 
   await page.goto('/')
+  const reslice = await flairResliceExpectation(page)
   const flair = page.locator('.scan-card').filter({ hasText: 'AX FLAIR' }).first()
   await flair.locator('button').click()
   await expect(page.locator('.viewer-canvas canvas')).toBeVisible({ timeout: 30_000 })
@@ -338,14 +387,16 @@ test('switches one 2D stack across orthogonal MPR planes', async ({ page }) => {
 
   await coronalPlane.click()
   await expect(page.locator('.slice-viewer')).toHaveAttribute('data-slice-plane', 'coronal')
+  const [coronalWidth, coronalHeight] = reslice.coronal
   await expect(page.locator('.slice-meta-left')).toContainText('CORONAL')
-  await expect(page.locator('.slice-meta-left')).toContainText('416 × 149')
-  await expect(page.getByTestId('slice-canvas')).toHaveAttribute('width', '416')
-  await expect(page.getByTestId('slice-canvas')).toHaveAttribute('height', '149')
+  await expect(page.locator('.slice-meta-left')).toContainText(`${coronalWidth} × ${coronalHeight}`)
+  await expect(page.getByTestId('slice-canvas')).toHaveAttribute('width', String(coronalWidth))
+  await expect(page.getByTestId('slice-canvas')).toHaveAttribute('height', String(coronalHeight))
   const coronalCanvasBox = await page.getByTestId('slice-canvas').boundingBox()
   expect(coronalCanvasBox).not.toBeNull()
   expect(coronalCanvasBox!.width / coronalCanvasBox!.height).toBeCloseTo(
-    (415 * 0.4492) / (148 * (3.9999764740342947 / 4)),
+    ((coronalWidth - 1) * reslice.inPlaneSpacing)
+      / ((coronalHeight - 1) * (FLAIR_SLICE_SPACING / 4)),
     1,
   )
   await expect(page.locator('.slice-scale-ruler')).toHaveCount(2)
@@ -393,8 +444,10 @@ test('switches one 2D stack across orthogonal MPR planes', async ({ page }) => {
 
   await sagittalPlane.click()
   await expect(page.locator('.slice-viewer')).toHaveAttribute('data-slice-plane', 'sagittal')
-  await expect(page.getByTestId('slice-canvas')).toHaveAttribute('width', '512')
-  await expect(page.getByTestId('slice-canvas')).toHaveAttribute('height', '149')
+  await expect(page.getByTestId('slice-canvas'))
+    .toHaveAttribute('width', String(reslice.sagittal[0]))
+  await expect(page.getByTestId('slice-canvas'))
+    .toHaveAttribute('height', String(reslice.sagittal[1]))
 
   await page.getByRole('tab', { name: /Split/ }).click()
   await expect(page.locator('.viewer-canvas canvas')).toBeVisible()
