@@ -47,6 +47,7 @@ import type {
   AnatomicalPlane,
   CropBounds,
   SeriesSummary,
+  Vec3Tuple,
   VolumeData,
   VolumeSettings,
 } from './types'
@@ -181,6 +182,17 @@ export default function App() {
     () => (mprSourceVolume ? resliceVolume(mprSourceVolume, slicePlane) : null),
     [mprSourceVolume, slicePlane],
   )
+  /**
+   * Grid the 3D view and every non-acquired MPR reformat sample from. Reconstruction
+   * scales the acquired in-plane grid to the device texture budget, so reformat sizes
+   * follow this, not the acquired columns/rows.
+   */
+  const renderGrid = useMemo<Vec3Tuple | null>(() => {
+    if (!volume) return null
+    return reconstructionEnabled && reconstruction.volume?.seriesId === volume.seriesId
+      ? reconstruction.volume.dimensions
+      : volume.dimensions
+  }, [reconstruction.volume, reconstructionEnabled, volume])
   const primarySliceVolume =
     viewerLayout === 'slice' || viewerLayout === 'split' ? mprVolume : volume
 
@@ -1200,9 +1212,9 @@ export default function App() {
                           data-camera-projection={cameraProjection}
                           data-crop-editing={cropEditing}
                           data-slice-plane={slicePlane}
-                          data-reconstructed-depth={reconstructionEnabled && reconstruction.volume?.seriesId === volume.seriesId
-                            ? reconstruction.volume.dimensions[2]
-                            : volume.dimensions[2]}
+                          data-reconstructed-width={renderGrid?.[0] ?? volume.dimensions[0]}
+                          data-reconstructed-height={renderGrid?.[1] ?? volume.dimensions[1]}
+                          data-reconstructed-depth={renderGrid?.[2] ?? volume.dimensions[2]}
                           data-synthetic-slices={reconstruction.volume?.seriesId === volume.seriesId
                             ? reconstruction.volume.syntheticSlices
                             : 0}
