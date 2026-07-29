@@ -84,15 +84,21 @@ async function settledHandleCenter(page: Page, handle: Locator) {
 test('opens the complete scan library and links 2D and 3D views', async ({ page }) => {
   // Batch #431 extended crop-handle settling + lighting assertions on this single flow.
   // CI (SwiftShader + full FLAIR recon) routinely needs more than the default 180s budget;
-  // run 30498456421 timed out mid fullPage screenshot with a healthy page snapshot.
+  // run 30498456421 exhausted the test budget mid screenshot; 30499086526 then hit the
+  // 30s fullPage cap on the live 3D crop editor after fonts loaded.
   test.setTimeout(480_000)
 
   const pageErrors: string[] = []
   page.on('pageerror', (error) => pageErrors.push(error.message))
 
-  /** Artifact capture that will not stall on continuous WebGL/CSS animation frames. */
+  /**
+   * Artifact capture for the WebGL viewer.
+   * fullPage + SwiftShader buffer readback on the live 3D crop editor exceeded the
+   * 30s cap in run 30499086526 (fonts loaded, then hung). Viewport-only avoids the
+   * multi-tile stitch; animations:disabled skips CSS; 90s covers a slow GPU readback.
+   */
   const capture = (path: string) =>
-    page.screenshot({ path, fullPage: true, animations: 'disabled', timeout: 30_000 })
+    page.screenshot({ path, animations: 'disabled', timeout: 90_000 })
 
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Scan library' })).toBeVisible()
