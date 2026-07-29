@@ -268,8 +268,10 @@ export default function App() {
         if (generation !== openGenerationRef.current) return
         const message =
           loadError instanceof Error ? loadError.message : 'The selected volume could not be opened.'
-        // Keep a valid prior volume on the viewer; library-only fallback when nothing is loaded.
-        if (volume) {
+        // goHome leaves the last volume in state. Library opens must always surface via
+        // catalogError (ScanLibrary only reads that prop). Keep setError only when already
+        // on the viewer with a residual volume so the stage/footer can show the failure.
+        if (volume && screen !== 'library') {
           setError(message)
         } else {
           setCatalogError(message)
@@ -282,7 +284,7 @@ export default function App() {
         }
       }
     },
-    [cancelInFlight, clearCompare, compareSeriesId, pushViewerLocation, rememberVolume, setError, setVolume, volume],
+    [cancelInFlight, clearCompare, compareSeriesId, pushViewerLocation, rememberVolume, screen, setError, setVolume, volume],
   )
 
   const setCompareSeries = useCallback(
