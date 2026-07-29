@@ -15,7 +15,7 @@ import type {
   VolumeData,
   VolumeSettings,
 } from '../types'
-import { compositeAnnotatedVolumePng } from '../lib/sliceCapture'
+import { compositeAnnotatedVolumePng, exportCapturePng, type CaptureExportResult } from '../lib/sliceCapture'
 import {
   normalizePhysicalSize,
   PALETTES,
@@ -38,7 +38,8 @@ export type RotationAxis = 'x' | 'y' | 'z'
 
 export interface ViewerStageHandle {
   resetView: () => void
-  capture: () => void
+  /** Export labeled volume PNG — clipboard when allowed, else download. Null if no runtime. */
+  capture: () => Promise<CaptureExportResult | null>
   toggleFullscreen: () => void
   setView: (view: CameraView) => void
   rotateVolume: (axis: RotationAxis) => void
@@ -800,15 +801,14 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
             runtime.needsRender = true
           }
         },
-        capture: () => {
+        capture: async () => {
           const runtime = runtimeRef.current
-          if (!runtime) return
+          if (!runtime) return null
           runtime.renderer.render(runtime.scene, runtime.camera)
           const reconstructed = reconstruction?.seriesId === volume.seriesId ? reconstruction : null
           const dimensions = reconstructed?.dimensions ?? volume.dimensions
-          const link = document.createElement('a')
-          link.download = `lumen-${volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.png`
-          link.href = compositeAnnotatedVolumePng({
+          const filename = `lumen-${volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.png`
+          const dataUrl = compositeAnnotatedVolumePng({
             source: runtime.renderer.domElement,
             seriesName: volume.description,
             orientation: volume.orientation,
@@ -817,7 +817,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
             paletteName: volumeSettings.palette,
             cropActive: isCropped(cropBounds),
           })
-          link.click()
+          return exportCapturePng(dataUrl, filename)
         },
         toggleFullscreen: () => {
           const element = containerRef.current

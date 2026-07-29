@@ -587,3 +587,98 @@ export function compositeAnnotatedVolumePng(input: AnnotatedVolumeCaptureInput):
 
   return canvas.toDataURL('image/png')
 }
+
+/** Outcome of S / camera export — clipboard when allowed, otherwise download. */
+export type CaptureExportResult = 'clipboard' | 'download'
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const comma = dataUrl.indexOf(',')
+  const header = comma >= 0 ? dataUrl.slice(0, comma) : ''
+  const payload = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl
+  const mimeMatch = /data:([^;]+)/.exec(header)
+  const mime = mimeMatch?.[1] ?? 'image/png'
+  const isBase64 = /;base64/i.test(header)
+  if (isBase64) {
+    const binary = atob(payload)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+    return new Blob([bytes], { type: mime })
+  }
+  return new Blob([decodeURIComponent(payload)], { type: mime })
+}
+
+function pngBlobFromSource(source: HTMLCanvasElement | string): Promise<Blob | null> {
+  if (typeof source === 'string') {
+    try {
+      return Promise.resolve(dataUrlToBlob(source))
+    } catch {
+      return Promise.resolve(null)
+    }
+  }
+  if (typeof source.toBlob === 'function') {
+    return new Promise((resolve) => {
+      source.toBlob((blob) => resolve(blob), 'image/png')
+    })
+  }
+  try {
+    return Promise.resolve(dataUrlToBlob(source.toDataURL('image/png')))
+  } catch {
+    return Promise.resolve(null)
+  }
+}
+
+function triggerPngDownload(filename: string, href: string) {
+  const link = document.createElement('a')
+  link.download = filename
+  link.href = href
+  link.click()
+}
+
+/**
+ * Write an annotated PNG to the system clipboard when the browser allows it;
+ * otherwise download via the classic anchor click. Returns which path ran.
+ */
+export async function exportCapturePng(
+  source: HTMLCanvasElement | string,
+  filename: string,
+): Promise<CaptureExportResult> {
+  const blobPromise = pngBlobFromSource(source)
+  const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined
+  const canWriteClipboard =
+    !!clipboard &&
+    typeof clipboard.write === 'function' &&
+    typeof ClipboardItem !== 'undefined'
+
+  if (canWriteClipboard) {
+    try {
+      const clipboardBlobPromise = blobPromise.then((blob) => {
+        if (!blob) throw new Error('PNG encoding failed')
+        return blob
+      })
+      // Safari requires clipboard.write() before the initiating user gesture ends.
+      await clipboard.write([new ClipboardItem({ 'image/png': clipboardBlobPromise })])
+      return 'clipboard'
+    } catch {
+      // Permission denied, insecure context, or image/png not supported.
+    }
+  }
+
+  const blob = await blobPromise
+  if (typeof source === 'string') {
+    triggerPngDownload(filename, source)
+    return 'download'
+  }
+
+  if (blob) {
+    const objectUrl = URL.createObjectURL(blob)
+    try {
+      triggerPngDownload(filename, objectUrl)
+    } finally {
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_500)
+    }
+    return 'download'
+  }
+
+  triggerPngDownload(filename, source.toDataURL('image/png'))
+  return 'download'
+}
