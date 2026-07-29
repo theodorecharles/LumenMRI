@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   compositeAnnotatedSlicePng,
   compositeAnnotatedVolumePng,
   compositeCompareSlicePng,
+  exportCapturePng,
   renderAnnotatedSliceCanvas,
 } from './sliceCapture'
 
@@ -452,6 +453,93 @@ describe('compositeAnnotatedVolumePng', () => {
     })
 
     expect(result).toBe('data:image/png;base64,SOURCE')
+    createElement.mockRestore()
+  })
+})
+
+describe('exportCapturePng', () => {
+  const tinyPng =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('writes image/png to the clipboard when ClipboardItem is available', async () => {
+    const write = vi.fn(async () => undefined)
+    const ClipboardItemMock = vi.fn(function ClipboardItemMock(this: unknown, items: Record<string, unknown>) {
+      return { items }
+    })
+    vi.stubGlobal('navigator', { clipboard: { write } })
+    vi.stubGlobal('ClipboardItem', ClipboardItemMock)
+
+    const result = await exportCapturePng(tinyPng, 'lumen-test.png')
+
+    expect(result).toBe('clipboard')
+    expect(ClipboardItemMock).toHaveBeenCalledOnce()
+    const payload = ClipboardItemMock.mock.calls[0]?.[0] as Record<string, Promise<Blob>>
+    expect(payload['image/png']).toBeInstanceOf(Promise)
+    const blob = await payload['image/png']
+    expect(blob).toBeInstanceOf(Blob)
+    expect(blob.type).toBe('image/png')
+    expect(write).toHaveBeenCalledOnce()
+  })
+
+  it('falls back to download when clipboard write rejects', async () => {
+    const write = vi.fn(async () => {
+      throw new Error('NotAllowedError')
+    })
+    vi.stubGlobal('navigator', { clipboard: { write } })
+    vi.stubGlobal(
+      'ClipboardItem',
+      vi.fn(function ClipboardItemMock(this: unknown, items: Record<string, unknown>) {
+        return { items }
+      }),
+    )
+
+    const click = vi.fn()
+    const createElement = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag !== 'a') return document.createElementNS('http://www.w3.org/1999/xhtml', tag)
+      return {
+        click,
+        set download(_value: string) {},
+        get download() {
+          return ''
+        },
+        set href(_value: string) {},
+        get href() {
+          return ''
+        },
+      } as unknown as HTMLAnchorElement
+    })
+
+    const result = await exportCapturePng(tinyPng, 'lumen-fallback.png')
+
+    expect(result).toBe('download')
+    expect(write).toHaveBeenCalledOnce()
+    expect(click).toHaveBeenCalledOnce()
+    createElement.mockRestore()
+  })
+
+  it('falls back to download when ClipboardItem is missing', async () => {
+    vi.stubGlobal('navigator', { clipboard: { write: vi.fn() } })
+    vi.stubGlobal('ClipboardItem', undefined)
+
+    const click = vi.fn()
+    const createElement = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag !== 'a') return document.createElementNS('http://www.w3.org/1999/xhtml', tag)
+      return {
+        click,
+        download: '',
+        href: '',
+      } as unknown as HTMLAnchorElement
+    })
+
+    const result = await exportCapturePng(tinyPng, 'lumen-no-clipboard-item.png')
+
+    expect(result).toBe('download')
+    expect(click).toHaveBeenCalledOnce()
     createElement.mockRestore()
   })
 })

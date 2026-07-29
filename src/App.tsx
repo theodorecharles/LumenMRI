@@ -24,7 +24,7 @@ import {
 import { useDicomLoader } from './hooks/useDicomLoader'
 import { useVolumeReconstruction } from './hooks/useVolumeReconstruction'
 import { chooseDirectory, filesFromDrop } from './lib/fileAccess'
-import { compositeCompareSlicePng } from './lib/sliceCapture'
+import { compositeCompareSlicePng, exportCapturePng, type CaptureExportResult } from './lib/sliceCapture'
 import { createDemoVolume, mapRelativeSliceIndex, midSliceIndex } from './lib/volume'
 import {
   bundledSeriesSummary,
@@ -124,6 +124,9 @@ export default function App() {
   const [isDragging, setIsDragging] = useState(false)
   const [isStageFullscreen, setIsStageFullscreen] = useState(false)
   const [shortcutSheetOpen, setShortcutSheetOpen] = useState(false)
+  /** Brief "Copied" toast after a successful clipboard capture. */
+  const [captureToast, setCaptureToast] = useState<string | null>(null)
+  const captureToastTimerRef = useRef<number | null>(null)
   /** Brief 2D crosshair flash after a 3D volume slice pick (token forces re-trigger). */
   const [slicePickFlash, setSlicePickFlash] = useState<{
     token: number
@@ -595,33 +598,54 @@ export default function App() {
     if (screen !== 'viewer') setIsStageFullscreen(false)
   }, [screen])
 
-  const captureActiveView = useCallback(() => {
+  const showCaptureToast = useCallback((message: string) => {
+    setCaptureToast(message)
+    if (captureToastTimerRef.current !== null) {
+      window.clearTimeout(captureToastTimerRef.current)
+    }
+    captureToastTimerRef.current = window.setTimeout(() => {
+      setCaptureToast(null)
+      captureToastTimerRef.current = null
+    }, 1800)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (captureToastTimerRef.current !== null) {
+        window.clearTimeout(captureToastTimerRef.current)
+      }
+    }
+  }, [])
+
+  const captureActiveView = useCallback(async () => {
+    let result: CaptureExportResult | null = null
     if (viewerLayout === 'compare') {
       const left = sliceViewerRef.current?.captureAnnotatedCanvas()
       if (!left) return
       const volB = compareVolume
       const right = volB ? compareSliceViewerRef.current?.captureAnnotatedCanvas() : null
-      const link = document.createElement('a')
       if (volB && right) {
         const leftSlug = volume
           ? volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
           : 'pane-a'
         const rightSlug = volB.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
-        link.download = `lumen-compare-${leftSlug}-vs-${rightSlug}.png`
-        link.href = compositeCompareSlicePng({ left, right, leftLabel: 'A', rightLabel: 'B' })
+        const filename = `lumen-compare-${leftSlug}-vs-${rightSlug}.png`
+        const dataUrl = compositeCompareSlicePng({ left, right, leftLabel: 'A', rightLabel: 'B' })
+        result = await exportCapturePng(dataUrl, filename)
       } else {
         const slug = volume
           ? volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
           : 'pane-a'
-        link.download = `lumen-${slug}-slice-${sliceIndex + 1}.png`
-        link.href = left.toDataURL('image/png')
+        const filename = `lumen-${slug}-slice-${sliceIndex + 1}.png`
+        result = await exportCapturePng(left, filename)
       }
-      link.click()
-      return
+    } else if (viewerLayout === 'slice') {
+      result = (await sliceViewerRef.current?.capture()) ?? null
+    } else {
+      result = (await viewerRef.current?.capture()) ?? null
     }
-    if (viewerLayout === 'slice') sliceViewerRef.current?.capture()
-    else viewerRef.current?.capture()
-  }, [compareVolume, sliceIndex, viewerLayout, volume])
+    if (result === 'clipboard') showCaptureToast('Copied')
+  }, [compareVolume, showCaptureToast, sliceIndex, viewerLayout, volume])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -652,7 +676,7 @@ export default function App() {
       if (target instanceof HTMLButtonElement) return
       if (event.key.toLowerCase() === 'r') viewerRef.current?.resetView()
       if (event.key.toLowerCase() === 'f') toggleStageFullscreen()
-      if (event.key.toLowerCase() === 's') captureActiveView()
+      if (event.key.toLowerCase() === 's') void captureActiveView()
       if (event.key.toLowerCase() === 'l') goHome()
       if (event.key === 'Escape' && isStageFullscreen && !document.fullscreenElement) {
         setIsStageFullscreen(false)
@@ -923,7 +947,7 @@ export default function App() {
                         <button className="icon-button reset-view-button" type="button" title="Reset view (R)" onClick={() => viewerRef.current?.resetView()}><RotateCcw size={16} /></button>
                       </>
                     ) : null}
-                    <button className="icon-button" type="button" title="Save image (S)" onClick={captureActiveView}><Camera size={16} /></button>
+                    <button className="icon-button" type="button" title="Save image (S)" onClick={() => void captureActiveView()}><Camera size={16} /></button>
                     <button
                       className="icon-button fullscreen-button"
                       type="button"
@@ -935,6 +959,11 @@ export default function App() {
                       {isStageFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
                     </button>
                   </div>
+                  {captureToast ? (
+                    <div className="capture-toast" role="status" aria-live="polite">
+                      {captureToast}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className={`stage-view-grid layout-${viewerLayout}`}>

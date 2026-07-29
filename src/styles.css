@@ -682,6 +682,36 @@ button:disabled {
   background: transparent;
 }
 
+.capture-toast {
+  position: absolute;
+  top: 48px;
+  right: 0;
+  z-index: 9;
+  padding: 6px 11px;
+  border: 1px solid rgba(82, 207, 229, 0.28);
+  border-radius: 7px;
+  color: #d9faff;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: rgba(7, 12, 18, 0.9);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+  animation: capture-toast-in 180ms ease-out;
+}
+
+@keyframes capture-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .volume-hud,
 .render-stats {
   position: absolute;

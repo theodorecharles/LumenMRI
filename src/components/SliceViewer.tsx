@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { formatProbeScalar, samplePixelAt, type PixelProbeSample } from '../lib/pixelProbe'
 import { computeRoiStats, formatRoiSummary } from '../lib/roiStats'
-import { renderAnnotatedSliceCanvas } from '../lib/sliceCapture'
+import { exportCapturePng, renderAnnotatedSliceCanvas, type CaptureExportResult } from '../lib/sliceCapture'
 import type { CropBounds, VolumeData, VolumeSettings } from '../types'
 
 const MIN_VIEW_SCALE = 1
@@ -24,8 +24,11 @@ const MAX_VIEW_SCALE = 8
 const ZOOM_STEP = 1.12
 
 export interface SliceViewerHandle {
-  /** Download an annotated PNG of the current slice (measurements, pins, metadata). */
-  capture: () => void
+  /**
+   * Export an annotated PNG of the current slice (measurements, pins, metadata).
+   * Prefers clipboard; falls back to download. Null when no canvas is available.
+   */
+  capture: () => Promise<CaptureExportResult | null>
   /**
    * Build an annotated canvas for the current slice without downloading.
    * Used by Compare layout to stitch A|B into one PNG.
@@ -337,13 +340,11 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
 
         return {
           captureAnnotatedCanvas,
-          capture: () => {
+          capture: async () => {
             const annotated = captureAnnotatedCanvas()
-            if (!annotated) return
-            const link = document.createElement('a')
-            link.download = `lumen-${volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-slice-${safeIndex + 1}.png`
-            link.href = annotated.toDataURL('image/png')
-            link.click()
+            if (!annotated) return null
+            const filename = `lumen-${volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-slice-${safeIndex + 1}.png`
+            return exportCapturePng(annotated, filename)
           },
           toggleCine,
           pauseCine,
