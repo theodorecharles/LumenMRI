@@ -24,6 +24,7 @@ import {
 import { useDicomLoader } from './hooks/useDicomLoader'
 import { useVolumeReconstruction } from './hooks/useVolumeReconstruction'
 import { chooseDirectory, filesFromDrop } from './lib/fileAccess'
+import { isTextEntryTarget, targetActivatesOnKey } from './lib/keyboardShortcuts'
 import {
   anatomicalPlaneFromOrientation,
   resliceVolume,
@@ -792,14 +793,7 @@ export default function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLSelectElement ||
-        (target instanceof HTMLElement && target.isContentEditable)
-      ) {
-        return
-      }
+      if (isTextEntryTarget(target)) return
 
       // Discoverability sheet: toggle on ?, dismiss on Esc. Works even when a
       // toolbar button is focused so the Help control can be keyboard-driven.
@@ -815,7 +809,10 @@ export default function App() {
       }
       if (shortcutSheetOpen) return
 
-      if (target instanceof HTMLButtonElement) return
+      // A focused button/link consumes Space and Enter itself; running a viewer
+      // shortcut on those would double-fire the control. Every other shortcut
+      // keeps working while a toolbar control holds focus after a click.
+      if (targetActivatesOnKey(target, event.key)) return
       if (event.key.toLowerCase() === 'r') viewerRef.current?.resetView()
       if (event.key.toLowerCase() === 'f') toggleStageFullscreen()
       if (event.key.toLowerCase() === 's') void captureActiveView()

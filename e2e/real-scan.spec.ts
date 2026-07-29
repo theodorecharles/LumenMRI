@@ -500,6 +500,59 @@ test('keeps the library and 2D viewer usable on a mobile viewport', async ({ pag
   await page.screenshot({ path: 'artifacts/mobile-slice-view.png', fullPage: true })
 })
 
+test('keeps viewer shortcuts alive while a toolbar button holds focus', async ({ page }) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+
+  await page.goto('/')
+  const flair = page.locator('.scan-card').filter({ hasText: 'AX FLAIR' }).first()
+  await flair.locator('button').click()
+  await expect(page.locator('.viewer-canvas canvas')).toBeVisible({ timeout: 30_000 })
+
+  const grid = page.locator('.stage-view-grid')
+  const volumeTab = page.getByRole('tab', { name: /3D/ })
+  const sliceTab = page.getByRole('tab', { name: /2D slice/ })
+  const splitTab = page.getByRole('tab', { name: /Split/ })
+
+  // Clicking a tab leaves that button focused. Layout digits must still fire
+  // instead of requiring a click on empty canvas first.
+  await splitTab.click()
+  await expect(splitTab).toBeFocused()
+  await expect(grid).toHaveClass(/layout-split/)
+  await page.keyboard.press('1')
+  await expect(grid).toHaveClass(/layout-volume/)
+  await expect(volumeTab).toHaveAttribute('aria-selected', 'true')
+  await expect(splitTab).toBeFocused()
+
+  // Slice stepping works from the same focused button.
+  await page.keyboard.press('2')
+  await expect(sliceTab).toHaveAttribute('aria-selected', 'true')
+  const sliceSlider = page.getByRole('slider', { name: 'Displayed slice' })
+  const startIndex = Number(await sliceSlider.inputValue())
+  await page.keyboard.press('ArrowDown')
+  await expect(sliceSlider).toHaveValue(String(startIndex + 1))
+  await page.keyboard.press('Home')
+  await expect(sliceSlider).toHaveValue('0')
+
+  // Space still belongs to the focused button: it re-activates that tab rather
+  // than toggling cine.
+  const cine = page.getByRole('button', { name: 'Play cine' })
+  await expect(cine).toHaveAttribute('aria-pressed', 'false')
+  await expect(splitTab).toBeFocused()
+  await page.keyboard.press(' ')
+  await expect(grid).toHaveClass(/layout-split/)
+  await expect(page.getByRole('button', { name: 'Play cine' })).toHaveAttribute('aria-pressed', 'false')
+
+  // With no control focused, Space drives cine as advertised.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+  await page.keyboard.press(' ')
+  await expect(page.getByRole('button', { name: 'Pause cine' })).toHaveAttribute('aria-pressed', 'true')
+  await page.keyboard.press(' ')
+  await expect(page.getByRole('button', { name: 'Play cine' })).toHaveAttribute('aria-pressed', 'false')
+
+  expect(pageErrors).toEqual([])
+})
+
 test('decodes a locally selected JPEG 2000 DICOM study', async ({ page }) => {
   const scanPath = process.env.MRI_JPEG2000_SCAN_PATH
   test.skip(!scanPath, 'Set MRI_JPEG2000_SCAN_PATH to exercise local JPEG 2000 decoding')
