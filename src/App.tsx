@@ -547,14 +547,15 @@ export default function App() {
   const slicePickEnabled = showSliceHighlight || viewerLayout === 'split'
 
   const handleVolumeSlicePick = useCallback((pick: VolumeSlicePick) => {
-    setSliceIndex(pick.sliceIndex)
+    // Route through setPrimarySliceIndex so Linked mode maps compare pane B.
+    setPrimarySliceIndex(pick.sliceIndex)
     slicePickFlashTokenRef.current += 1
     setSlicePickFlash({
       token: slicePickFlashTokenRef.current,
       x: pick.x,
       y: pick.y,
     })
-  }, [])
+  }, [setPrimarySliceIndex])
 
   const toggleStageFullscreen = useCallback(() => {
     if (isStageFullscreen) {
