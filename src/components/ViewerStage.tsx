@@ -8,7 +8,13 @@ import {
 } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import type { CropBounds, ReconstructedVolume, VolumeData, VolumeSettings } from '../types'
+import type {
+  CropBounds,
+  ReconstructedVolume,
+  Vec3Tuple,
+  VolumeData,
+  VolumeSettings,
+} from '../types'
 import { compositeAnnotatedVolumePng } from '../lib/sliceCapture'
 import {
   normalizePhysicalSize,
@@ -18,11 +24,12 @@ import {
 } from '../lib/volume'
 import { volumeFragmentShader, volumeVertexShader } from '../rendering/shaders'
 
-/** Result of Alt+click volume pick — stack index plus image-space fractions for the 2D flash. */
+/** Result of Alt+click volume pick in acquired image-space coordinates. */
 export interface VolumeSlicePick {
   sliceIndex: number
   x: number
   y: number
+  sourceFractions: Vec3Tuple
 }
 
 export type CameraView = 'perspective' | 'slices' | 'back' | 'side' | 'left' | 'top' | 'bottom'
@@ -163,6 +170,7 @@ function pickSliceOnVolume(
     sliceIndex: sliceIndexFromStackFraction(coords.stackFraction, stackDepth),
     x: coords.x,
     y: coords.y,
+    sourceFractions: [coords.x, coords.y, coords.stackFraction],
   }
 }
 
