@@ -2,6 +2,8 @@ export type PaletteName = 'cyan' | 'thermal' | 'ember' | 'bone' | 'custom'
 
 export type Vec3Tuple = [number, number, number]
 
+export type AnatomicalPlane = 'axial' | 'coronal' | 'sagittal'
+
 export interface SeriesSummary {
   id: string
   description: string

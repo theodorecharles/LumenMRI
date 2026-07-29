@@ -14,10 +14,11 @@ import {
   SquareDashed,
   Trash2,
 } from 'lucide-react'
+import { rulerLengthMillimeters } from '../lib/mpr'
 import { formatProbeScalar, samplePixelAt, type PixelProbeSample } from '../lib/pixelProbe'
 import { computeRoiStats, formatRoiSummary } from '../lib/roiStats'
 import { renderAnnotatedSliceCanvas } from '../lib/sliceCapture'
-import type { CropBounds, VolumeData, VolumeSettings } from '../types'
+import type { AnatomicalPlane, CropBounds, VolumeData, VolumeSettings } from '../types'
 
 const MIN_VIEW_SCALE = 1
 const MAX_VIEW_SCALE = 8
@@ -40,6 +41,12 @@ export interface SliceViewerHandle {
 const CINE_FPS_OPTIONS = [5, 10, 15] as const
 type CineFps = (typeof CINE_FPS_OPTIONS)[number]
 
+const MPR_PLANES: { plane: AnatomicalPlane; label: string; shortLabel: string }[] = [
+  { plane: 'axial', label: 'Axial', shortLabel: 'AX' },
+  { plane: 'coronal', label: 'Coronal', shortLabel: 'COR' },
+  { plane: 'sagittal', label: 'Sagittal', shortLabel: 'SAG' },
+]
+
 interface SliceViewerProps {
   volume: VolumeData
   sliceIndex: number
@@ -58,6 +65,10 @@ interface SliceViewerProps {
   paneLabel?: string
   /** Hide 3D crop controls (compare layout). */
   hideCropControls?: boolean
+  /** Controlled single-plane MPR selector; omitted in Compare. */
+  slicePlane?: AnatomicalPlane
+  acquiredPlane?: AnatomicalPlane
+  onSlicePlaneChange?: (plane: AnatomicalPlane) => void
 }
 
 interface CanvasRect {
@@ -245,6 +256,9 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     pickFlash = null,
     paneLabel,
     hideCropControls = false,
+    slicePlane,
+    acquiredPlane,
+    onSlicePlaneChange,
   }, forwardedRef) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const viewportRef = useRef<HTMLDivElement>(null)
@@ -279,6 +293,11 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const [width, height, depth] = volume.dimensions
     const safeIndex = Math.max(0, Math.min(depth - 1, sliceIndex))
     const labels = orientationLabels(volume.orientation)
+    const hasPlaneSwitch = slicePlane !== undefined && onSlicePlaneChange !== undefined
+    const horizontalSpanMillimeters = Math.max(1, width - 1) * volume.spacing[0]
+    const verticalSpanMillimeters = Math.max(1, height - 1) * volume.spacing[1]
+    const horizontalRulerMillimeters = rulerLengthMillimeters(horizontalSpanMillimeters)
+    const verticalRulerMillimeters = rulerLengthMillimeters(verticalSpanMillimeters)
     sliceIndexRef.current = safeIndex
     const viewTransformed = view.scale > MIN_VIEW_SCALE + 0.001 || Math.abs(view.x) > 0.5 || Math.abs(view.y) > 0.5
     viewRef.current = view
@@ -341,7 +360,8 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
             const annotated = captureAnnotatedCanvas()
             if (!annotated) return
             const link = document.createElement('a')
-            link.download = `lumen-${volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-slice-${safeIndex + 1}.png`
+            const orientation = volume.orientation.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+            link.download = `lumen-${volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${orientation}-slice-${safeIndex + 1}.png`
             link.href = annotated.toDataURL('image/png')
             link.click()
           },
@@ -864,12 +884,41 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
 
     return (
       <section
-        className={paneLabel ? `slice-viewer pane-${paneLabel.toLowerCase()}` : 'slice-viewer'}
+        className={[
+          'slice-viewer',
+          paneLabel ? `pane-${paneLabel.toLowerCase()}` : '',
+          hasPlaneSwitch ? 'has-plane-switch' : '',
+        ].filter(Boolean).join(' ')}
         aria-label={paneLabel ? `2D DICOM slice viewer pane ${paneLabel}` : '2D DICOM slice viewer'}
         data-pane={paneLabel || undefined}
+        data-slice-plane={slicePlane}
         onWheel={handleWheel}
       >
         <div className="slice-viewport" ref={viewportRef}>
+          {hasPlaneSwitch ? (
+            <div className="mpr-plane-switch" role="group" aria-label="MPR plane">
+              {MPR_PLANES.map(({ plane, label, shortLabel }) => {
+                const isAcquired = acquiredPlane === plane
+                return (
+                  <button
+                    key={plane}
+                    type="button"
+                    className={slicePlane === plane ? 'active' : ''}
+                    aria-label={`${label} plane${isAcquired ? ' (acquired)' : ''}`}
+                    aria-pressed={slicePlane === plane}
+                    data-acquired={isAcquired ? 'true' : undefined}
+                    title={`${label}${isAcquired ? ' · acquired' : ' reformat'}`}
+                    onClick={() => {
+                      setCinePlaying(false)
+                      onSlicePlaneChange(plane)
+                    }}
+                  >
+                    {shortLabel}
+                  </button>
+                )
+              })}
+            </div>
+          ) : null}
           <div
             className={`slice-stage${canPan ? ' pannable' : ''}${panning ? ' panning' : ''}${windowLevelDrag ? ' window-leveling' : ''}${probeTool ? ' probing' : ''}`}
             ref={stageRef}
@@ -886,13 +935,44 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
             onPointerLeave={clearProbeHover}
             onContextMenu={(event) => event.preventDefault()}
           >
-            <canvas ref={canvasRef} data-testid="slice-canvas" aria-label={`Slice ${safeIndex + 1} of ${depth}`} />
+            <canvas
+              ref={canvasRef}
+              data-testid="slice-canvas"
+              aria-label={`Slice ${safeIndex + 1} of ${depth}`}
+              style={{
+                aspectRatio: `${horizontalSpanMillimeters} / ${verticalSpanMillimeters}`,
+                objectFit: 'fill',
+                ...(horizontalSpanMillimeters >= verticalSpanMillimeters
+                  ? { width: '100%', height: 'auto' }
+                  : { width: 'auto', height: '100%' }),
+              }}
+            />
             {canvasRect ? (
               <div
                 className={`crop-overlay${cropEditing ? ' editing' : ''}${measurementTool ? ' measuring' : ''}${probeTool ? ' probing' : ''}${windowLevelDrag ? ' window-leveling' : ''}${canPan ? ' panning-ready' : ''}`}
                 data-testid="crop-overlay"
                 style={canvasRect}
               >
+                <div
+                  className="slice-scale-ruler ruler-horizontal"
+                  aria-label={`${horizontalRulerMillimeters} millimeter horizontal scale`}
+                  style={{
+                    width: `${Math.min(45, (horizontalRulerMillimeters / horizontalSpanMillimeters) * 100)}%`,
+                  }}
+                >
+                  <i />
+                  <span>{horizontalRulerMillimeters} mm</span>
+                </div>
+                <div
+                  className="slice-scale-ruler ruler-vertical"
+                  aria-label={`${verticalRulerMillimeters} millimeter vertical scale`}
+                  style={{
+                    height: `${Math.min(45, (verticalRulerMillimeters / verticalSpanMillimeters) * 100)}%`,
+                  }}
+                >
+                  <i />
+                  <span>{verticalRulerMillimeters} mm</span>
+                </div>
                 {cropped || cropEditing ? (
                   <div
                     className="crop-selection"

@@ -2010,6 +2010,56 @@ button:disabled {
   background-size: 42px 42px;
 }
 
+.mpr-plane-switch {
+  position: absolute;
+  z-index: 7;
+  top: 61px;
+  left: 50%;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(116, 174, 188, 0.2);
+  border-radius: 7px;
+  background: rgba(5, 13, 19, 0.9);
+  box-shadow: 0 7px 24px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(12px);
+}
+
+.mpr-plane-switch button {
+  position: relative;
+  min-width: 34px;
+  height: 25px;
+  padding: 0 7px;
+  color: #6f858e;
+  font-family: 'DM Mono', monospace;
+  font-size: 7.5px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+}
+
+.mpr-plane-switch button:hover,
+.mpr-plane-switch button.active {
+  color: #d9faff;
+  border-color: rgba(60, 211, 237, 0.24);
+  background: rgba(60, 211, 237, 0.13);
+}
+
+.mpr-plane-switch button[data-acquired='true']::after {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 3px;
+  height: 3px;
+  content: '';
+  border-radius: 50%;
+  background: #67e4a0;
+  box-shadow: 0 0 5px rgba(103, 228, 160, 0.6);
+}
+
 .slice-stage {
   position: relative;
   z-index: 2;
@@ -2051,6 +2101,85 @@ button:disabled {
   overflow: hidden;
   pointer-events: none;
   touch-action: none;
+}
+
+.slice-scale-ruler {
+  position: absolute;
+  z-index: 2;
+  color: rgba(198, 231, 237, 0.7);
+  font-family: 'DM Mono', monospace;
+  font-size: 7px;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
+.slice-scale-ruler i,
+.slice-scale-ruler i::before,
+.slice-scale-ruler i::after {
+  position: absolute;
+  display: block;
+  content: '';
+  background: rgba(198, 231, 237, 0.68);
+}
+
+.slice-scale-ruler.ruler-horizontal {
+  bottom: 4.5%;
+  left: 7%;
+  height: 14px;
+  text-align: center;
+}
+
+.slice-scale-ruler.ruler-horizontal i {
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+}
+
+.slice-scale-ruler.ruler-horizontal i::before,
+.slice-scale-ruler.ruler-horizontal i::after {
+  bottom: -2px;
+  width: 1px;
+  height: 5px;
+}
+
+.slice-scale-ruler.ruler-horizontal i::before { left: 0; }
+.slice-scale-ruler.ruler-horizontal i::after { right: 0; }
+
+.slice-scale-ruler.ruler-horizontal span {
+  display: block;
+  transform: translateY(-1px);
+}
+
+.slice-scale-ruler.ruler-vertical {
+  bottom: 7%;
+  left: 3.5%;
+  width: 14px;
+}
+
+.slice-scale-ruler.ruler-vertical i {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.slice-scale-ruler.ruler-vertical i::before,
+.slice-scale-ruler.ruler-vertical i::after {
+  right: -2px;
+  width: 5px;
+  height: 1px;
+}
+
+.slice-scale-ruler.ruler-vertical i::before { top: 0; }
+.slice-scale-ruler.ruler-vertical i::after { bottom: 0; }
+
+.slice-scale-ruler.ruler-vertical span {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  white-space: nowrap;
+  transform: translateY(-50%) rotate(-90deg);
 }
 
 .crop-overlay.interactive {
@@ -2455,6 +2584,7 @@ button:disabled {
 }
 
 .marker-top { top: 59px; left: 50%; transform: translateX(-50%); }
+.slice-viewer.has-plane-switch .marker-top { top: 96px; }
 .marker-right { right: 13px; top: 50%; transform: translateY(-50%); }
 .marker-bottom { bottom: 10px; left: 50%; transform: translateX(-50%); }
 .marker-left { left: 13px; top: 50%; transform: translateY(-50%); }
