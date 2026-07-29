@@ -228,12 +228,50 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
     await page.mouse.click(cropBox.x + cropBox.width * 0.5, cropBox.y + cropBox.height * 0.28)
   }
   await expect(page.locator('.measurement-label.angle')).toContainText('°')
-  await page.screenshot({ path: 'artifacts/linked-split-view.png', fullPage: true })
-  await page.getByRole('button', { name: 'Clear measurements on slice' }).click()
+  const measuredSlice = Number(await sliceSlider.inputValue())
+  const annotationInventory = page.getByTestId('annotation-inventory')
+  const annotationRows = page.getByTestId('annotation-inventory-row')
+  await expect(annotationInventory).toBeVisible()
+  await expect(annotationRows).toHaveCount(3)
+  await expect(annotationRows.filter({ hasText: 'Distance' })).toContainText('mm')
+  await expect(annotationRows.filter({ hasText: 'ROI' })).toContainText('mm²')
+  await expect(annotationRows.filter({ hasText: 'Angle' })).toContainText('°')
+
+  const probeSlice = measuredSlice < maximum ? measuredSlice + 1 : measuredSlice - 1
+  await sliceSlider.fill(String(probeSlice))
   await expect(page.locator('.measurement-label')).toHaveCount(0)
-  // Deselect active measure tool so plain left-drag is free; shift-drag still owns W/L.
-  await page.getByRole('button', { name: 'Angle measurement' }).click()
-  await expect(page.getByRole('button', { name: 'Angle measurement' })).toHaveAttribute('aria-pressed', 'false')
+  await expect(annotationRows).toHaveCount(3)
+  await page.getByRole('button', { name: 'Pixel intensity probe' }).click()
+  if (cropBox) {
+    await page.mouse.click(
+      cropBox.x + cropBox.width * 0.55,
+      cropBox.y + cropBox.height * 0.45,
+    )
+  }
+  await expect(page.getByTestId('pixel-probe-pin')).toHaveCount(1)
+  await expect(annotationRows).toHaveCount(4)
+  await expect(annotationRows.filter({ hasText: 'Probe' })).toContainText(
+    `SL ${String(probeSlice + 1).padStart(3, '0')}`,
+  )
+
+  // Per-slice clear removes the probe but preserves measurements elsewhere in the series.
+  await page.getByRole('button', { name: 'Clear measurements on slice' }).click()
+  await expect(page.getByTestId('pixel-probe-pin')).toHaveCount(0)
+  await expect(annotationRows).toHaveCount(3)
+
+  // Inventory rows jump back to their slice and flash the selected mark.
+  await annotationRows.filter({ hasText: 'ROI' }).click()
+  await expect(sliceSlider).toHaveValue(String(measuredSlice))
+  await expect(page.getByTestId('slice-pick-crosshair')).toBeVisible()
+  await expect(page.locator('.roi-measurement')).toHaveClass(/is-flashing/)
+  await expect(annotationRows.filter({ hasText: 'ROI' })).toHaveClass(/selected/)
+  await page.screenshot({ path: 'artifacts/linked-split-view.png', fullPage: true })
+  await page.getByRole('button', { name: 'Clear all annotations on series' }).click()
+  await expect(annotationInventory).toHaveCount(0)
+  await expect(page.locator('.measurement-label')).toHaveCount(0)
+  // Deselect active probe tool so plain left-drag is free; shift-drag still owns W/L.
+  await page.getByRole('button', { name: 'Pixel intensity probe' }).click()
+  await expect(page.getByRole('button', { name: 'Pixel intensity probe' })).toHaveAttribute('aria-pressed', 'false')
 
   const windowSlider = page.getByRole('slider', { name: 'Window' })
   const levelSlider = page.getByRole('slider', { name: 'Level' })
