@@ -18,10 +18,9 @@ import { rulerLengthMillimeters } from '../lib/mpr'
 import { formatProbeScalar, samplePixelAt, type PixelProbeSample } from '../lib/pixelProbe'
 import { computeRoiStats, formatRoiSummary } from '../lib/roiStats'
 import { exportCapturePng, renderAnnotatedSliceCanvas, type CaptureExportResult } from '../lib/sliceCapture'
+import { FIT_VIEW, MIN_VIEW_SCALE, zoomAboutPoint, type ViewTransform } from '../lib/sliceView'
 import type { AnatomicalPlane, CropBounds, VolumeData, VolumeSettings } from '../types'
 
-const MIN_VIEW_SCALE = 1
-const MAX_VIEW_SCALE = 8
 const ZOOM_STEP = 1.12
 
 export interface SliceViewerHandle {
@@ -93,14 +92,6 @@ interface CanvasRect {
   height: number
 }
 
-export interface ViewTransform {
-  scale: number
-  x: number
-  y: number
-}
-
-export const FIT_VIEW: ViewTransform = { scale: 1, x: 0, y: 0 }
-
 type CropInteraction =
   | { type: 'draw'; startX: number; startY: number }
   | { type: 'move'; startX: number; startY: number; bounds: CropBounds }
@@ -157,33 +148,6 @@ type PointerInteraction = CropInteraction | WindowLevelInteraction | {
   startClientY: number
   originX: number
   originY: number
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value))
-}
-
-function zoomAboutPoint(
-  view: ViewTransform,
-  nextScale: number,
-  cursorX: number,
-  cursorY: number,
-  viewportWidth: number,
-  viewportHeight: number,
-): ViewTransform {
-  const scale = clamp(nextScale, MIN_VIEW_SCALE, MAX_VIEW_SCALE)
-  if (scale === view.scale) return view
-  if (scale <= MIN_VIEW_SCALE) return FIT_VIEW
-
-  const centerX = viewportWidth * 0.5
-  const centerY = viewportHeight * 0.5
-  const contentX = (cursorX - centerX - view.x) / view.scale
-  const contentY = (cursorY - centerY - view.y) / view.scale
-  return {
-    scale,
-    x: cursorX - centerX - contentX * scale,
-    y: cursorY - centerY - contentY * scale,
-  }
 }
 
 function clamp01(value: number, min = 0, max = 1) {
@@ -907,16 +871,23 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       event.preventDefault()
       if (event.ctrlKey || event.metaKey) {
         const viewport = viewportRef.current
-        if (!viewport) return
+        const stage = stageRef.current
+        if (!viewport || !stage) return
         const bounds = viewport.getBoundingClientRect()
+        // Anchor on the stage's layout center — its transform-origin. Layout offsets are
+        // pre-transform and relative to `.slice-viewport` (position: relative), the same
+        // origin as the cursor coords below. The viewport's border-box center would be
+        // wrong: its vertical padding is asymmetric, so the centered stage sits below it.
+        const anchorX = stage.offsetLeft + stage.offsetWidth * 0.5
+        const anchorY = stage.offsetTop + stage.offsetHeight * 0.5
         const factor = event.deltaY > 0 ? 1 / ZOOM_STEP : ZOOM_STEP
         setView((current) => zoomAboutPoint(
           current,
           current.scale * factor,
           event.clientX - bounds.left,
           event.clientY - bounds.top,
-          bounds.width,
-          bounds.height,
+          anchorX,
+          anchorY,
         ))
         return
       }
