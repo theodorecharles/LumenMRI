@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { reconstructionOptionsForDevice } from '../src/lib/reconstructVolume'
@@ -48,6 +48,37 @@ async function flairResliceExpectation(page: Page): Promise<ResliceExpectation> 
     throw new Error(`No AX FLAIR reslice expectation for maxDimension ${maxDimension}`)
   }
   return expectation
+}
+
+/**
+ * 3D crop handles are DOM buttons projected from the WebGL camera every frame, and
+ * finishing a drag recenters the visible volume. Wait for a handle's projected center
+ * to hold still across rendered frames before synthesizing the next pointer gesture,
+ * otherwise a press can land on the canvas beside a handle that has already moved.
+ */
+async function settledHandleCenter(page: Page, handle: Locator) {
+  const readCenter = async () => {
+    const box = await handle.boundingBox()
+    expect(box).not.toBeNull()
+    return { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 }
+  }
+  const nextFrames = () => page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  }))
+
+  let previous = await readCenter()
+  let stableReads = 0
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    await page.waitForTimeout(80)
+    await nextFrames()
+    const current = await readCenter()
+    stableReads = Math.hypot(current.x - previous.x, current.y - previous.y) < 0.5
+      ? stableReads + 1
+      : 0
+    previous = current
+    if (stableReads >= 2) return current
+  }
+  throw new Error('3D crop handle position never settled')
 }
 
 test('opens the complete scan library and links 2D and 3D views', async ({ page }) => {
@@ -108,30 +139,19 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
   await expect(page.locator('.viewer-canvas')).toHaveAttribute('data-crop-cross-sections', '6')
   const nearDepthHandle = page.getByRole('button', { name: 'Drag near depth crop face' })
   const farDepthHandle = page.getByRole('button', { name: 'Drag far depth crop face' })
-  const nearDepthBox = await nearDepthHandle.boundingBox()
-  const farDepthBox = await farDepthHandle.boundingBox()
-  expect(nearDepthBox).not.toBeNull()
-  expect(farDepthBox).not.toBeNull()
-  if (nearDepthBox && farDepthBox) {
-    const near = {
-      x: nearDepthBox.x + nearDepthBox.width / 2,
-      y: nearDepthBox.y + nearDepthBox.height / 2,
-    }
-    const far = {
-      x: farDepthBox.x + farDepthBox.width / 2,
-      y: farDepthBox.y + farDepthBox.height / 2,
-    }
-    await page.mouse.move(far.x, far.y)
-    await page.mouse.down()
-    for (let step = 1; step <= 8; step += 1) {
-      await page.mouse.move(
-        far.x + (near.x - far.x) * 0.32 * step / 8,
-        far.y + (near.y - far.y) * 0.32 * step / 8,
-      )
-      await page.waitForTimeout(25)
-    }
-    await page.mouse.up()
+  const near = await settledHandleCenter(page, nearDepthHandle)
+  const far = await settledHandleCenter(page, farDepthHandle)
+  await page.mouse.move(far.x, far.y)
+  await page.mouse.down()
+  await expect(page.locator('.viewer-canvas')).toHaveAttribute('data-crop-drag-mode', 'face')
+  for (let step = 1; step <= 8; step += 1) {
+    await page.mouse.move(
+      far.x + (near.x - far.x) * 0.32 * step / 8,
+      far.y + (near.y - far.y) * 0.32 * step / 8,
+    )
+    await page.waitForTimeout(25)
   }
+  await page.mouse.up()
   await expect.poll(async () => page.locator('.viewer-canvas').getAttribute('data-crop-bounds'))
     .not.toBe('0.0000,1.0000,0.0000,1.0000,0.0000,1.0000')
   const cropValues = (await page.locator('.viewer-canvas').getAttribute('data-crop-bounds'))
@@ -142,53 +162,36 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
 
   const leftCropHandle = page.getByRole('button', { name: 'Drag left crop face' })
   const rightCropHandle = page.getByRole('button', { name: 'Drag right crop face' })
-  const leftCropBox = await leftCropHandle.boundingBox()
-  const rightCropBox = await rightCropHandle.boundingBox()
-  expect(leftCropBox).not.toBeNull()
-  expect(rightCropBox).not.toBeNull()
-  if (leftCropBox && rightCropBox) {
-    const left = {
-      x: leftCropBox.x + leftCropBox.width / 2,
-      y: leftCropBox.y + leftCropBox.height / 2,
-    }
-    const right = {
-      x: rightCropBox.x + rightCropBox.width / 2,
-      y: rightCropBox.y + rightCropBox.height / 2,
-    }
-    await page.mouse.move(right.x, right.y)
-    await page.mouse.down()
-    await page.mouse.move(
-      right.x + (left.x - right.x) * 0.22,
-      right.y + (left.y - right.y) * 0.22,
-      { steps: 8 },
-    )
-    await page.mouse.up()
-  }
+  const left = await settledHandleCenter(page, leftCropHandle)
+  const right = await settledHandleCenter(page, rightCropHandle)
+  await page.mouse.move(right.x, right.y)
+  await page.mouse.down()
+  await expect(page.locator('.viewer-canvas')).toHaveAttribute('data-crop-drag-mode', 'face')
+  await page.mouse.move(
+    right.x + (left.x - right.x) * 0.22,
+    right.y + (left.y - right.y) * 0.22,
+    { steps: 8 },
+  )
+  await page.mouse.up()
   const beforeMove = (await page.locator('.viewer-canvas').getAttribute('data-crop-bounds'))
     ?.split(',').map(Number) || []
   expect(beforeMove[1]).toBeLessThan(0.95)
   const moveHandle = page.getByRole('button', { name: 'Move entire crop box' })
-  const moveBox = await moveHandle.boundingBox()
-  const translatedLeftBox = await leftCropHandle.boundingBox()
-  const translatedRightBox = await rightCropHandle.boundingBox()
-  if (moveBox && translatedLeftBox && translatedRightBox) {
-    const move = {
-      x: moveBox.x + moveBox.width / 2,
-      y: moveBox.y + moveBox.height / 2,
-    }
-    const axisX = translatedRightBox.x - translatedLeftBox.x
-    const axisY = translatedRightBox.y - translatedLeftBox.y
-    await page.mouse.move(move.x, move.y)
-    await page.mouse.down()
-    await expect(page.locator('.viewer-canvas')).toHaveAttribute('data-crop-drag-mode', 'move')
-    await page.mouse.move(move.x + axisX * 0.2, move.y + axisY * 0.2, { steps: 10 })
-    await expect.poll(async () => {
-      const delta = (await page.locator('.viewer-canvas').getAttribute('data-crop-move-delta'))
-        ?.split(',').map(Number) || []
-      return delta[0]
-    }).toBeGreaterThan(0.01)
-    await page.mouse.up()
-  }
+  const translatedLeft = await settledHandleCenter(page, leftCropHandle)
+  const translatedRight = await settledHandleCenter(page, rightCropHandle)
+  const move = await settledHandleCenter(page, moveHandle)
+  const axisX = translatedRight.x - translatedLeft.x
+  const axisY = translatedRight.y - translatedLeft.y
+  await page.mouse.move(move.x, move.y)
+  await page.mouse.down()
+  await expect(page.locator('.viewer-canvas')).toHaveAttribute('data-crop-drag-mode', 'move')
+  await page.mouse.move(move.x + axisX * 0.2, move.y + axisY * 0.2, { steps: 10 })
+  await expect.poll(async () => {
+    const delta = (await page.locator('.viewer-canvas').getAttribute('data-crop-move-delta'))
+      ?.split(',').map(Number) || []
+    return delta[0]
+  }).toBeGreaterThan(0.01)
+  await page.mouse.up()
   await expect.poll(async () => {
     const bounds = (await page.locator('.viewer-canvas').getAttribute('data-crop-bounds'))
       ?.split(',').map(Number) || []
@@ -371,11 +374,23 @@ test('switches one 2D stack across orthogonal MPR planes', async ({ page }) => {
   const flair = page.locator('.scan-card').filter({ hasText: 'AX FLAIR' }).first()
   await flair.locator('button').click()
   await expect(page.locator('.viewer-canvas canvas')).toBeVisible({ timeout: 30_000 })
-  await expect(page.locator('.viewer-stage-pane')).toHaveAttribute(
+  const volumePane = page.locator('.viewer-stage-pane')
+  await expect(volumePane).toHaveAttribute(
     'data-reconstruction-status',
     'ready',
     { timeout: 120_000 },
   )
+  /**
+   * Reformat sizes follow the reconstruction grid, and reconstruction scales the
+   * acquired 416 × 512 in-plane grid down on low-core/small-viewport devices — so the
+   * expected reformat dimensions are read from the volume pane, not hard-coded.
+   */
+  const gridColumns = Number(await volumePane.getAttribute('data-reconstructed-width'))
+  const gridRows = Number(await volumePane.getAttribute('data-reconstructed-height'))
+  const gridDepth = Number(await volumePane.getAttribute('data-reconstructed-depth'))
+  expect(gridColumns).toBeGreaterThan(0)
+  expect(gridRows).toBeGreaterThan(0)
+  expect(gridDepth).toBeGreaterThan(38)
   await page.getByRole('tab', { name: /2D slice/ }).click()
 
   const planeSwitch = page.getByRole('group', { name: 'MPR plane' })
@@ -389,11 +404,12 @@ test('switches one 2D stack across orthogonal MPR planes', async ({ page }) => {
   await expect(page.locator('.slice-viewer')).toHaveAttribute('data-slice-plane', 'coronal')
   const [coronalWidth, coronalHeight] = reslice.coronal
   await expect(page.locator('.slice-meta-left')).toContainText('CORONAL')
-  await expect(page.locator('.slice-meta-left')).toContainText(`${coronalWidth} × ${coronalHeight}`)
-  await expect(page.getByTestId('slice-canvas')).toHaveAttribute('width', String(coronalWidth))
-  await expect(page.getByTestId('slice-canvas')).toHaveAttribute('height', String(coronalHeight))
+  await expect(page.locator('.slice-meta-left')).toContainText(`${gridColumns} × ${gridDepth}`)
+  await expect(page.getByTestId('slice-canvas')).toHaveAttribute('width', String(gridColumns))
+  await expect(page.getByTestId('slice-canvas')).toHaveAttribute('height', String(gridDepth))
   const coronalCanvasBox = await page.getByTestId('slice-canvas').boundingBox()
   expect(coronalCanvasBox).not.toBeNull()
+  // Physical proportions come from the acquired geometry and hold at any grid scale.
   expect(coronalCanvasBox!.width / coronalCanvasBox!.height).toBeCloseTo(
     ((coronalWidth - 1) * reslice.inPlaneSpacing)
       / ((coronalHeight - 1) * (FLAIR_SLICE_SPACING / 4)),
@@ -444,10 +460,8 @@ test('switches one 2D stack across orthogonal MPR planes', async ({ page }) => {
 
   await sagittalPlane.click()
   await expect(page.locator('.slice-viewer')).toHaveAttribute('data-slice-plane', 'sagittal')
-  await expect(page.getByTestId('slice-canvas'))
-    .toHaveAttribute('width', String(reslice.sagittal[0]))
-  await expect(page.getByTestId('slice-canvas'))
-    .toHaveAttribute('height', String(reslice.sagittal[1]))
+  await expect(page.getByTestId('slice-canvas')).toHaveAttribute('width', String(gridRows))
+  await expect(page.getByTestId('slice-canvas')).toHaveAttribute('height', String(gridDepth))
 
   await page.getByRole('tab', { name: /Split/ }).click()
   await expect(page.locator('.viewer-canvas canvas')).toBeVisible()

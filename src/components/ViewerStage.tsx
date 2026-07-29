@@ -673,6 +673,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         pixelsPerFraction,
         bounds: { ...cropBounds },
       }
+      if (containerRef.current) containerRef.current.dataset.cropDragMode = 'face'
       runtime.controls.enabled = false
       event.currentTarget.setPointerCapture(event.pointerId)
       event.preventDefault()
@@ -786,6 +787,10 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       if (runtime) {
         runtime.controls.enabled = true
         recenterVisibleVolume(runtime)
+        // Recentering moves the camera, so re-project the handles now instead of
+        // leaving them a frame behind — a pointer press right after a drag has to
+        // land on the handle where it is actually drawn.
+        updateCropHandlePositions(runtime, cropHandleRefs.current)
         runtime.needsRender = true
       }
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -1360,7 +1365,10 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         updateCropOutline(runtime, cropEditing)
         updateCropFaces(runtime, cropEditing)
         updateSliceVisibility(runtime)
-        if (!cropDragRef.current) recenterVisibleVolume(runtime)
+        if (!cropDragRef.current) {
+          recenterVisibleVolume(runtime)
+          updateCropHandlePositions(runtime, cropHandleRefs.current)
+        }
         runtime.needsRender = true
       }
     }, [cropBounds, cropEditing])
