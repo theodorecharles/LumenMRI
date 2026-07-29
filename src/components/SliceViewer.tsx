@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import {
   ChevronDown,
   ChevronUp,
@@ -230,6 +230,42 @@ function measurementSummary(
   return formatRoiSummary(stats)
 }
 
+const TOOL_LABELS: Record<MeasurementTool | 'probe', string> = {
+  distance: 'Distance',
+  roi: 'ROI',
+  angle: 'Angle',
+  probe: 'Probe',
+}
+
+const TOOL_SORT_ORDER: Record<MeasurementTool | 'probe', number> = {
+  distance: 0,
+  roi: 1,
+  angle: 2,
+  probe: 3,
+}
+
+/** Normalized image point used to flash a mark after jump-to-slice. */
+function measurementFlashPoint(measurement: Measurement): MeasurementPoint {
+  if (measurement.tool === 'angle' && measurement.vertex) {
+    return { x: measurement.vertex.x, y: measurement.vertex.y }
+  }
+  return {
+    x: (measurement.start.x + measurement.end.x) * 0.5,
+    y: (measurement.start.y + measurement.end.y) * 0.5,
+  }
+}
+
+interface AnnotationInventoryItem {
+  key: string
+  kind: 'measurement' | 'probe'
+  tool: MeasurementTool | 'probe'
+  id: number
+  slice: number
+  summary: string
+  flashX: number
+  flashY: number
+}
+
 export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
   function SliceViewer({
     volume,
@@ -252,6 +288,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const interactionRef = useRef<PointerInteraction | null>(null)
     const measurementIdRef = useRef(0)
     const probeIdRef = useRef(0)
+    const annotationFlashTokenRef = useRef(0)
     const angleBuildRef = useRef<AngleBuild | null>(null)
     const sliceIndexRef = useRef(sliceIndex)
     const viewRef = useRef<ViewTransform>(FIT_VIEW)
@@ -275,6 +312,12 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       token: number
       x: number
       y: number
+    } | null>(null)
+    /** Series inventory jump — highlights matching mark after slice change. */
+    const [annotationFlash, setAnnotationFlash] = useState<{
+      token: number
+      kind: 'measurement' | 'probe'
+      id: number
     } | null>(null)
     const [width, height, depth] = volume.dimensions
     const safeIndex = Math.max(0, Math.min(depth - 1, sliceIndex))
@@ -417,12 +460,23 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       setProbeTool(false)
       setProbeHover(null)
       setPinnedProbes([])
+      setAnnotationFlash(null)
       angleBuildRef.current = null
       interactionRef.current = null
       setCinePlaying(false)
       setView(FIT_VIEW)
       setPanning(false)
     }, [volume.seriesId])
+
+    useEffect(() => {
+      if (!annotationFlash) return
+      const token = annotationFlash.token
+      const timer = window.setTimeout(() => {
+        setAnnotationFlash((current) => (current?.token === token ? null : current))
+        setActivePickFlash((current) => (current?.token === token ? null : current))
+      }, 900)
+      return () => window.clearTimeout(timer)
+    }, [annotationFlash])
 
     useEffect(() => {
       setCinePlaying(false)
@@ -799,6 +853,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     }
 
     const handleWheel = (event: React.WheelEvent<HTMLElement>) => {
+      if ((event.target as HTMLElement).closest('.annotation-inventory-list')) return
       event.preventDefault()
       if (event.ctrlKey || event.metaKey) {
         const viewport = viewportRef.current
@@ -844,11 +899,78 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       : currentMeasurements
     const currentPinnedProbes = pinnedProbes.filter((probe) => probe.slice === safeIndex)
     const hasSliceAnnotations = currentMeasurements.length > 0 || currentPinnedProbes.length > 0
+    const hasSeriesAnnotations = measurements.length > 0 || pinnedProbes.length > 0
+
+    const annotationInventory = useMemo<AnnotationInventoryItem[]>(() => {
+      const showScalar =
+        Math.abs(volume.scalarRange[1] - volume.scalarRange[0] - 255) > 1
+        || Math.abs(volume.scalarRange[0]) > 0.5
+      const items: AnnotationInventoryItem[] = [
+        ...measurements.map((measurement) => {
+          const flash = measurementFlashPoint(measurement)
+          return {
+            key: `m-${measurement.id}`,
+            kind: 'measurement' as const,
+            tool: measurement.tool,
+            id: measurement.id,
+            slice: measurement.slice,
+            summary: measurementSummary(measurement, volume, width, height) || TOOL_LABELS[measurement.tool],
+            flashX: flash.x,
+            flashY: flash.y,
+          }
+        }),
+        ...pinnedProbes.map((probe) => ({
+          key: `p-${probe.id}`,
+          kind: 'probe' as const,
+          tool: 'probe' as const,
+          id: probe.id,
+          slice: probe.slice,
+          summary: showScalar
+            ? `I ${probe.sample.intensity} · ${formatProbeScalar(probe.sample.scalar)}`
+            : `I ${probe.sample.intensity}`,
+          flashX: probe.x,
+          flashY: probe.y,
+        })),
+      ]
+      items.sort((a, b) => {
+        if (a.slice !== b.slice) return a.slice - b.slice
+        if (TOOL_SORT_ORDER[a.tool] !== TOOL_SORT_ORDER[b.tool]) {
+          return TOOL_SORT_ORDER[a.tool] - TOOL_SORT_ORDER[b.tool]
+        }
+        return a.id - b.id
+      })
+      return items
+    }, [height, measurements, pinnedProbes, volume, width])
 
     const clearSliceAnnotations = () => {
       setMeasurements((current) => current.filter((measurement) => measurement.slice !== safeIndex))
       setPinnedProbes((current) => current.filter((probe) => probe.slice !== safeIndex))
     }
+
+    const clearAllAnnotations = () => {
+      setMeasurements([])
+      setPinnedProbes([])
+      setMeasurementDraft(null)
+      angleBuildRef.current = null
+      setAnnotationFlash(null)
+    }
+
+    const jumpToAnnotation = (item: AnnotationInventoryItem) => {
+      setCinePlaying(false)
+      onSliceChange(Math.max(0, Math.min(depth - 1, item.slice)))
+      // Negative tokens cannot collide with App's positive 3D-pick sequence.
+      annotationFlashTokenRef.current -= 1
+      const token = annotationFlashTokenRef.current
+      setAnnotationFlash({ token, kind: item.kind, id: item.id })
+      setActivePickFlash({ token, x: item.flashX, y: item.flashY })
+    }
+
+    const isFlashingMeasurement = (id: number) => (
+      annotationFlash?.kind === 'measurement' && annotationFlash.id === id
+    )
+    const isFlashingProbe = (id: number) => (
+      annotationFlash?.kind === 'probe' && annotationFlash.id === id
+    )
 
     const cropped = cropBounds.minX > 0.001 || cropBounds.maxX < 0.999 ||
       cropBounds.minY > 0.001 || cropBounds.maxY < 0.999 ||
@@ -921,9 +1043,10 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                         const y1 = measurement.start.y * height
                         const x2 = measurement.end.x * width
                         const y2 = measurement.end.y * height
+                        const flashClass = isFlashingMeasurement(measurement.id) ? ' is-flashing' : ''
                         if (measurement.tool === 'distance') {
                           return (
-                            <g key={measurement.id} className="distance-measurement">
+                            <g key={measurement.id} className={`distance-measurement${flashClass}`}>
                               <line x1={x1} y1={y1} x2={x2} y2={y2} />
                               <circle cx={x1} cy={y1} r="3.5" />
                               <circle cx={x2} cy={y2} r="3.5" />
@@ -934,7 +1057,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                           const vx = (measurement.vertex?.x ?? measurement.end.x) * width
                           const vy = (measurement.vertex?.y ?? measurement.end.y) * height
                           return (
-                            <g key={measurement.id} className="angle-measurement">
+                            <g key={measurement.id} className={`angle-measurement${flashClass}`}>
                               {measurement.vertex ? (
                                 <>
                                   <line x1={x1} y1={y1} x2={vx} y2={vy} />
@@ -956,7 +1079,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                         return (
                           <rect
                             key={measurement.id}
-                            className="roi-measurement"
+                            className={`roi-measurement${flashClass}`}
                             x={Math.min(x1, x2)}
                             y={Math.min(y1, y2)}
                             width={Math.abs(x2 - x1)}
@@ -981,7 +1104,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                       return (
                         <span
                           key={`label-${measurement.id}`}
-                          className={`measurement-label ${measurement.tool}`}
+                          className={`measurement-label ${measurement.tool}${isFlashingMeasurement(measurement.id) ? ' is-flashing' : ''}`}
                           style={{
                             left: `${Math.max(0.05, Math.min(0.95, labelX)) * 100}%`,
                             top: `${Math.max(0.05, Math.min(0.95, labelY)) * 100}%`,
@@ -1002,7 +1125,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                 {currentPinnedProbes.map((probe) => (
                   <div
                     key={probe.id}
-                    className="pixel-probe-pin"
+                    className={`pixel-probe-pin${isFlashingProbe(probe.id) ? ' is-flashing' : ''}`}
                     data-testid="pixel-probe-pin"
                     style={{
                       left: `${probe.x * 100}%`,
@@ -1059,68 +1182,120 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
               </div>
             ) : null}
           </div>
-          <div className="measurement-toolbar" role="toolbar" aria-label="Slice measurement tools">
-            <button
-              type="button"
-              className={measurementTool === 'distance' ? 'active' : ''}
-              aria-label="Distance measurement"
-              aria-pressed={measurementTool === 'distance'}
-              title="Measure distance in millimeters"
-              onClick={() => selectMeasurementTool('distance')}
-            >
-              <Ruler size={14} /><span>Distance</span>
-            </button>
-            <button
-              type="button"
-              className={measurementTool === 'roi' ? 'active' : ''}
-              aria-label="ROI area measurement"
-              aria-pressed={measurementTool === 'roi'}
-              title="Measure ROI area, mean, SD, min–max"
-              onClick={() => selectMeasurementTool('roi')}
-            >
-              <SquareDashed size={14} /><span>ROI</span>
-            </button>
-            <button
-              type="button"
-              className={measurementTool === 'angle' ? 'active' : ''}
-              aria-label="Angle measurement"
-              aria-pressed={measurementTool === 'angle'}
-              title="Measure angle between two rays (three clicks)"
-              onClick={() => selectMeasurementTool('angle')}
-            >
-              <DraftingCompass size={14} /><span>Angle</span>
-            </button>
-            <button
-              type="button"
-              className={probeTool ? 'active' : ''}
-              aria-label="Pixel intensity probe"
-              aria-pressed={probeTool}
-              title="Probe pixel intensity (hover live; click to pin)"
-              data-testid="probe-tool"
-              onClick={toggleProbeTool}
-            >
-              <Crosshair size={14} /><span>Probe</span>
-            </button>
-            <button
-              type="button"
-              aria-label="Clear measurements on slice"
-              title="Clear measurements and pins on this slice"
-              disabled={!hasSliceAnnotations}
-              onClick={clearSliceAnnotations}
-            >
-              <Trash2 size={13} />
-            </button>
-            {viewTransformed ? (
+          <div className="measurement-tools-cluster">
+            {hasSeriesAnnotations ? (
+              <div
+                className="annotation-inventory"
+                data-testid="annotation-inventory"
+                aria-label="Series annotations"
+              >
+                <div className="annotation-inventory-header">
+                  <span>
+                    Annotations
+                    <b>{annotationInventory.length}</b>
+                  </span>
+                  <button
+                    type="button"
+                    className="annotation-inventory-clear-all"
+                    aria-label="Clear all annotations on series"
+                    title="Clear all measurements and pins on this series"
+                    onClick={clearAllAnnotations}
+                  >
+                    Clear all
+                  </button>
+                </div>
+                <ul className="annotation-inventory-list" aria-label="Series annotation list">
+                  {annotationInventory.map((item) => {
+                    const onCurrentSlice = item.slice === safeIndex
+                    const selected = (
+                      (item.kind === 'measurement' && isFlashingMeasurement(item.id))
+                      || (item.kind === 'probe' && isFlashingProbe(item.id))
+                    )
+                    return (
+                      <li key={item.key}>
+                        <button
+                          type="button"
+                          className={`annotation-inventory-row tool-${item.tool}${onCurrentSlice ? ' on-slice' : ''}${selected ? ' selected' : ''}`}
+                          data-testid="annotation-inventory-row"
+                          data-slice={item.slice}
+                          aria-current={onCurrentSlice ? 'true' : undefined}
+                          aria-label={`${TOOL_LABELS[item.tool]}, ${item.summary}, slice ${item.slice + 1}`}
+                          title={`Jump to slice ${item.slice + 1}`}
+                          onClick={() => jumpToAnnotation(item)}
+                        >
+                          <span className="annotation-inventory-tool">{TOOL_LABELS[item.tool]}</span>
+                          <span className="annotation-inventory-summary">{item.summary}</span>
+                          <span className="annotation-inventory-slice">SL {String(item.slice + 1).padStart(3, '0')}</span>
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            ) : null}
+            <div className="measurement-toolbar" role="toolbar" aria-label="Slice measurement tools">
               <button
                 type="button"
-                aria-label="Reset pan and zoom"
-                title="Reset pan and zoom (fit to view)"
-                data-testid="reset-view"
-                onClick={resetView}
+                className={measurementTool === 'distance' ? 'active' : ''}
+                aria-label="Distance measurement"
+                aria-pressed={measurementTool === 'distance'}
+                title="Measure distance in millimeters"
+                onClick={() => selectMeasurementTool('distance')}
               >
-                <Maximize2 size={13} /><span>Fit</span>
+                <Ruler size={14} /><span>Distance</span>
               </button>
-            ) : null}
+              <button
+                type="button"
+                className={measurementTool === 'roi' ? 'active' : ''}
+                aria-label="ROI area measurement"
+                aria-pressed={measurementTool === 'roi'}
+                title="Measure ROI area, mean, SD, min–max"
+                onClick={() => selectMeasurementTool('roi')}
+              >
+                <SquareDashed size={14} /><span>ROI</span>
+              </button>
+              <button
+                type="button"
+                className={measurementTool === 'angle' ? 'active' : ''}
+                aria-label="Angle measurement"
+                aria-pressed={measurementTool === 'angle'}
+                title="Measure angle between two rays (three clicks)"
+                onClick={() => selectMeasurementTool('angle')}
+              >
+                <DraftingCompass size={14} /><span>Angle</span>
+              </button>
+              <button
+                type="button"
+                className={probeTool ? 'active' : ''}
+                aria-label="Pixel intensity probe"
+                aria-pressed={probeTool}
+                title="Probe pixel intensity (hover live; click to pin)"
+                data-testid="probe-tool"
+                onClick={toggleProbeTool}
+              >
+                <Crosshair size={14} /><span>Probe</span>
+              </button>
+              <button
+                type="button"
+                aria-label="Clear measurements on slice"
+                title="Clear measurements and pins on this slice"
+                disabled={!hasSliceAnnotations}
+                onClick={clearSliceAnnotations}
+              >
+                <Trash2 size={13} />
+              </button>
+              {viewTransformed ? (
+                <button
+                  type="button"
+                  aria-label="Reset pan and zoom"
+                  title="Reset pan and zoom (fit to view)"
+                  data-testid="reset-view"
+                  onClick={resetView}
+                >
+                  <Maximize2 size={13} /><span>Fit</span>
+                </button>
+              ) : null}
+            </div>
           </div>
           {viewTransformed ? (
             <div className="slice-view-badge" data-testid="view-zoom-badge" aria-live="polite">
