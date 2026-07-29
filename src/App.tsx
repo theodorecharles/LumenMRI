@@ -30,6 +30,7 @@ import {
   sourcePointToPlane,
 } from './lib/mpr'
 import { compositeCompareSlicePng, exportCapturePng, type CaptureExportResult } from './lib/sliceCapture'
+import { FIT_VIEW, type ViewTransform } from './lib/sliceView'
 import {
   createDemoVolume,
   mapRelativeSliceIndex,
@@ -55,7 +56,7 @@ import { EmptyStage } from './components/EmptyStage'
 import { ScanLibrary } from './components/ScanLibrary'
 import { SeriesPanel } from './components/SeriesPanel'
 import { ShortcutSheet } from './components/ShortcutSheet'
-import { FIT_VIEW, SliceViewer, type SliceViewerHandle, type ViewTransform } from './components/SliceViewer'
+import { SliceViewer, type SliceViewerHandle } from './components/SliceViewer'
 import type { ViewerStageHandle, VolumeSlicePick } from './components/ViewerStage'
 
 const ViewerStage = lazy(() =>
