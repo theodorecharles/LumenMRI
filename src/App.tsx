@@ -29,6 +29,7 @@ import {
   resliceVolume,
   sourcePointToPlane,
 } from './lib/mpr'
+import { isReconstructionReady } from './lib/reconstructVolume'
 import { compositeCompareSlicePng, exportCapturePng, type CaptureExportResult } from './lib/sliceCapture'
 import {
   createDemoVolume,
@@ -1350,7 +1351,7 @@ export default function App() {
             projection={cameraProjection}
             onProjectionChange={setCameraProjection}
             reconstructionEnabled={reconstructionEnabled}
-            reconstructionReady={reconstruction.volume?.seriesId === volume?.seriesId}
+            reconstructionReady={isReconstructionReady(reconstruction.volume, volume)}
             reconstructionStatus={reconstruction.status}
             reconstructionMessage={reconstruction.message}
             onReconstructionEnabledChange={handleReconstructionEnabledChange}

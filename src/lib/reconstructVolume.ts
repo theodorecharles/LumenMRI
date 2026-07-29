@@ -1,4 +1,4 @@
-import type { ReconstructedVolume, Vec3Tuple } from '../types'
+import type { ReconstructedVolume, Vec3Tuple, VolumeData } from '../types'
 
 export interface ReconstructionOptions {
   maxDimension: number
@@ -37,6 +37,18 @@ const PATCH_OFFSETS = [
 
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.max(minimum, Math.min(maximum, value))
+
+/**
+ * A reconstruction is only usable when a volume is loaded and the reconstruction
+ * belongs to that exact series. Comparing optional chains directly would report
+ * ready when both sides are absent.
+ */
+export function isReconstructionReady(
+  reconstructed: Pick<ReconstructedVolume, 'seriesId'> | null | undefined,
+  volume: Pick<VolumeData, 'seriesId'> | null | undefined,
+): boolean {
+  return Boolean(volume && reconstructed && reconstructed.seriesId === volume.seriesId)
+}
 
 export function planVolumeReconstruction(
   dimensions: Vec3Tuple,
