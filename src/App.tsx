@@ -268,8 +268,10 @@ export default function App() {
         if (generation !== openGenerationRef.current) return
         const message =
           loadError instanceof Error ? loadError.message : 'The selected volume could not be opened.'
-        // Keep a valid prior volume on the viewer; library-only fallback when nothing is loaded.
-        if (volume) {
+        // goHome leaves the last volume in state. Library opens must always surface via
+        // catalogError (ScanLibrary only reads that prop). Keep setError only when already
+        // on the viewer with a residual volume so the stage/footer can show the failure.
+        if (volume && screen !== 'library') {
           setError(message)
         } else {
           setCatalogError(message)
@@ -282,7 +284,7 @@ export default function App() {
         }
       }
     },
-    [cancelInFlight, clearCompare, compareSeriesId, pushViewerLocation, rememberVolume, setError, setVolume, volume],
+    [cancelInFlight, clearCompare, compareSeriesId, pushViewerLocation, rememberVolume, screen, setError, setVolume, volume],
   )
 
   const setCompareSeries = useCallback(
@@ -392,7 +394,11 @@ export default function App() {
         const local = series.find((entry) => entry.id === id)
         if (local) {
           cancelPendingOpen()
-          // Primary load-series replaces any compare onVolume — drop the opening flag.
+          // Cancel in-flight worker load (compare or prior primary). load-series alone does
+          // not bump jobGeneration; without cancel the compare job can still post volume-ready
+          // after pendingOnVolume is cleared and install B as primary.
+          cancelInFlight()
+          // Drop compare-open flag so busy does not stick after abandon.
           if (compareOpeningIdRef.current) {
             compareOpeningIdRef.current = null
             setCompareOpeningId(null)
@@ -406,7 +412,7 @@ export default function App() {
     window.addEventListener('popstate', navigateFromHistory)
     if (bundledSeries.length && window.location.hash) navigateFromHistory()
     return () => window.removeEventListener('popstate', navigateFromHistory)
-  }, [bundledSeries, cancelPendingOpen, clearCompare, loadSeries, openBundledSeries, series])
+  }, [bundledSeries, cancelInFlight, cancelPendingOpen, clearCompare, loadSeries, openBundledSeries, series])
 
   const goHome = useCallback((pushHistory = true) => {
     cancelPendingOpen()
@@ -547,14 +553,15 @@ export default function App() {
   const slicePickEnabled = showSliceHighlight || viewerLayout === 'split'
 
   const handleVolumeSlicePick = useCallback((pick: VolumeSlicePick) => {
-    setSliceIndex(pick.sliceIndex)
+    // Route through setPrimarySliceIndex so Linked mode maps compare pane B.
+    setPrimarySliceIndex(pick.sliceIndex)
     slicePickFlashTokenRef.current += 1
     setSlicePickFlash({
       token: slicePickFlashTokenRef.current,
       x: pick.x,
       y: pick.y,
     })
-  }, [])
+  }, [setPrimarySliceIndex])
 
   const toggleStageFullscreen = useCallback(() => {
     if (isStageFullscreen) {

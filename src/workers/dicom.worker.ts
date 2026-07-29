@@ -309,7 +309,13 @@ async function decodePixels(dataSet: DataSet, record: SliceRecord): Promise<Uint
 
   if (JPEG_2000_SYNTAXES.has(record.transferSyntax)) {
     const compressed = compressedPixels(dataSet)
-    openJPEGPromise ||= OpenJPEGJS({ print: () => {}, printErr: () => {} })
+    // Do not keep a rejected Promise in openJPEGPromise — ||= would never re-init.
+    if (!openJPEGPromise) {
+      openJPEGPromise = OpenJPEGJS({ print: () => {}, printErr: () => {} }).catch((error) => {
+        openJPEGPromise = null
+        throw error
+      })
+    }
     const openJPEG = await openJPEGPromise
     const decoder = new openJPEG.J2KDecoder()
     try {
