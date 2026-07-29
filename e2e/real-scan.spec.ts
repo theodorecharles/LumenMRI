@@ -82,8 +82,17 @@ async function settledHandleCenter(page: Page, handle: Locator) {
 }
 
 test('opens the complete scan library and links 2D and 3D views', async ({ page }) => {
+  // Batch #431 extended crop-handle settling + lighting assertions on this single flow.
+  // CI (SwiftShader + full FLAIR recon) routinely needs more than the default 180s budget;
+  // run 30498456421 timed out mid fullPage screenshot with a healthy page snapshot.
+  test.setTimeout(480_000)
+
   const pageErrors: string[] = []
   page.on('pageerror', (error) => pageErrors.push(error.message))
+
+  /** Artifact capture that will not stall on continuous WebGL/CSS animation frames. */
+  const capture = (path: string) =>
+    page.screenshot({ path, fullPage: true, animations: 'disabled', timeout: 30_000 })
 
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Scan library' })).toBeVisible()
@@ -105,7 +114,7 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
     expect(lastPreviewSlice).toBeGreaterThan(firstPreviewSlice)
   }
   await expect(flair.getByText(/Slice \d+\/\d+/)).toBeVisible()
-  await page.screenshot({ path: 'artifacts/scan-library.png', fullPage: true })
+  await capture('artifacts/scan-library.png')
   await flair.locator('button').click()
 
   await expect(page.locator('.viewer-canvas canvas')).toBeVisible({ timeout: 30_000 })
@@ -208,7 +217,7 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
   await page.getByRole('slider', { name: 'Light elevation' }).fill('-18')
   await expect(page.getByRole('slider', { name: 'Light azimuth' })).toHaveValue('72')
   await expect(page.getByRole('slider', { name: 'Light elevation' })).toHaveValue('-18')
-  await page.screenshot({ path: 'artifacts/draggable-3d-depth-crop.png', fullPage: true })
+  await capture('artifacts/draggable-3d-depth-crop.png')
   await page.getByRole('button', { name: 'Stop editing 3D crop box' }).click()
   const thermalPalette = page.getByRole('radio', { name: 'thermal' })
   await thermalPalette.click()
@@ -223,7 +232,7 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
   await expect(volumePane).toHaveAttribute('data-camera-projection', 'isometric')
   await page.getByRole('button', { name: 'Superior view' }).click()
   await expect(page.getByRole('group', { name: 'Anatomical view cube' })).toBeVisible()
-  await page.screenshot({ path: 'artifacts/isometric-thermal-reconstruction.png', fullPage: true })
+  await capture('artifacts/isometric-thermal-reconstruction.png')
   await page.getByRole('button', { name: 'Perspective', exact: true }).click()
   await expect(volumePane).toHaveAttribute('data-camera-projection', 'perspective')
 
@@ -317,7 +326,7 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
   await expect(page.getByTestId('slice-pick-crosshair')).toBeVisible()
   await expect(page.locator('.roi-measurement')).toHaveClass(/is-flashing/)
   await expect(annotationRows.filter({ hasText: 'ROI' })).toHaveClass(/selected/)
-  await page.screenshot({ path: 'artifacts/linked-split-view.png', fullPage: true })
+  await capture('artifacts/linked-split-view.png')
   await page.getByRole('button', { name: 'Clear all annotations on series' }).click()
   await expect(annotationInventory).toHaveCount(0)
   await expect(page.locator('.measurement-label')).toHaveCount(0)
@@ -358,7 +367,7 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
   await page.getByRole('tab', { name: /2D slice/ }).click()
   await expect(page.getByTestId('slice-canvas')).toBeVisible()
   await expect(page.locator('.viewer-canvas')).toHaveCount(0)
-  await page.screenshot({ path: 'artifacts/diagnostic-slice-view.png', fullPage: true })
+  await capture('artifacts/diagnostic-slice-view.png')
 
   await page.goBack()
   await expect(page.getByRole('heading', { name: 'Scan library' })).toBeVisible()
