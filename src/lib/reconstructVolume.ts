@@ -1,4 +1,4 @@
-import type { ReconstructedVolume, Vec3Tuple } from '../types'
+import type { ReconstructedVolume, Vec3Tuple, VolumeData } from '../types'
 
 export interface ReconstructionOptions {
   maxDimension: number
@@ -12,6 +12,38 @@ export interface ReconstructionPlan {
   depth: number
   factor: number
   spacing: Vec3Tuple
+}
+
+export interface DeviceCapability {
+  /** True when the viewport is phone-sized. */
+  compactViewport: boolean
+  /** `navigator.hardwareConcurrency`, which some browsers leave undefined. */
+  hardwareConcurrency: number | undefined
+}
+
+const COMPACT_RECONSTRUCTION: ReconstructionOptions = {
+  maxDimension: 384,
+  maxVoxels: 18_000_000,
+  maxSliceFactor: 4,
+}
+
+const FULL_RECONSTRUCTION: ReconstructionOptions = {
+  maxDimension: 512,
+  maxVoxels: 42_000_000,
+  maxSliceFactor: 4,
+}
+
+/**
+ * Reconstruction budget for one device. Phone viewports and low core counts get the
+ * compact budget, which lowers in-plane resolution as well as through-plane synthesis,
+ * so reslice dimensions for the same series differ between hosts.
+ */
+export function reconstructionOptionsForDevice(
+  capability: DeviceCapability,
+): ReconstructionOptions {
+  const cores = capability.hardwareConcurrency
+  const limitedCores = typeof cores === 'number' && Number.isFinite(cores) && cores <= 4
+  return capability.compactViewport || limitedCores ? COMPACT_RECONSTRUCTION : FULL_RECONSTRUCTION
 }
 
 interface FlowField {
@@ -37,6 +69,18 @@ const PATCH_OFFSETS = [
 
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.max(minimum, Math.min(maximum, value))
+
+/**
+ * A reconstruction is only usable when a volume is loaded and the reconstruction
+ * belongs to that exact series. Comparing optional chains directly would report
+ * ready when both sides are absent.
+ */
+export function isReconstructionReady(
+  reconstructed: Pick<ReconstructedVolume, 'seriesId'> | null | undefined,
+  volume: Pick<VolumeData, 'seriesId'> | null | undefined,
+): boolean {
+  return Boolean(volume && reconstructed && reconstructed.seriesId === volume.seriesId)
+}
 
 export function planVolumeReconstruction(
   dimensions: Vec3Tuple,

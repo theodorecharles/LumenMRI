@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReconstructedVolume, VolumeData } from '../types'
+import { reconstructionOptionsForDevice } from '../lib/reconstructVolume'
 
 export interface ReconstructionState {
   status: 'idle' | 'processing' | 'ready' | 'error'
@@ -29,7 +30,10 @@ export function useVolumeReconstruction(source: VolumeData | null) {
     const worker = new Worker(new URL('../workers/reconstruction.worker.ts', import.meta.url), {
       type: 'module',
     })
-    const compactDevice = window.matchMedia('(max-width: 690px)').matches || navigator.hardwareConcurrency <= 4
+    const options = reconstructionOptionsForDevice({
+      compactViewport: window.matchMedia('(max-width: 690px)').matches,
+      hardwareConcurrency: navigator.hardwareConcurrency,
+    })
     const copy = source.data.slice()
     setState({
       status: 'processing',
@@ -77,11 +81,7 @@ export function useVolumeReconstruction(source: VolumeData | null) {
       data: copy,
       dimensions: source.dimensions,
       spacing: source.spacing,
-      options: {
-        maxDimension: compactDevice ? 384 : 512,
-        maxVoxels: compactDevice ? 18_000_000 : 42_000_000,
-        maxSliceFactor: 4,
-      },
+      options,
     }, [copy.buffer])
 
     return () => worker.terminate()

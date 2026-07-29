@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { Vec3Tuple } from '../types'
 import {
   createDemoVolume,
   mapRelativeSliceIndex,
@@ -7,7 +8,11 @@ import {
   sliceIndexFromStackFraction,
   volumeLocalToImageCoords,
 } from './volume'
-import { planVolumeReconstruction, reconstructVolume } from './reconstructVolume'
+import {
+  planVolumeReconstruction,
+  reconstructionOptionsForDevice,
+  reconstructVolume,
+} from './reconstructVolume'
 
 describe('volume utilities', () => {
   it('normalizes physical dimensions without changing their aspect ratio', () => {
@@ -89,6 +94,44 @@ describe('volume utilities', () => {
     expect(plan.factor).toBe(3)
     expect(plan.depth).toBe(118)
     expect(plan.width * plan.height * plan.depth).toBeLessThanOrEqual(18_000_000)
+  })
+
+  it('drops to the compact reconstruction budget on small or low-core devices', () => {
+    const full = reconstructionOptionsForDevice({ compactViewport: false, hardwareConcurrency: 8 })
+    expect(full.maxDimension).toBe(512)
+    expect(full.maxVoxels).toBe(42_000_000)
+    // Four logical cores is the compact threshold, even on a desktop viewport.
+    expect(reconstructionOptionsForDevice({
+      compactViewport: false,
+      hardwareConcurrency: 4,
+    }).maxDimension).toBe(384)
+    expect(reconstructionOptionsForDevice({
+      compactViewport: true,
+      hardwareConcurrency: 16,
+    }).maxDimension).toBe(384)
+    // Browsers without hardwareConcurrency keep the full budget.
+    expect(reconstructionOptionsForDevice({
+      compactViewport: false,
+      hardwareConcurrency: undefined,
+    }).maxDimension).toBe(512)
+  })
+
+  it('plans AX FLAIR in-plane resolution from the device budget', () => {
+    const flairDimensions: Vec3Tuple = [416, 512, 38]
+    const flairSpacing: Vec3Tuple = [0.4492, 0.4492, 3.9999764740342947]
+    const full = planVolumeReconstruction(
+      flairDimensions,
+      flairSpacing,
+      reconstructionOptionsForDevice({ compactViewport: false, hardwareConcurrency: 8 }),
+    )
+    expect([full.width, full.height, full.depth]).toEqual([416, 512, 149])
+    const compact = planVolumeReconstruction(
+      flairDimensions,
+      flairSpacing,
+      reconstructionOptionsForDevice({ compactViewport: false, hardwareConcurrency: 4 }),
+    )
+    // Same physical geometry, 384-capped in-plane pixels: coronal reslice is 312 wide.
+    expect([compact.width, compact.height, compact.depth]).toEqual([312, 384, 149])
   })
 
   it('creates registered synthetic slices while preserving acquired endpoints', async () => {

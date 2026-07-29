@@ -619,8 +619,10 @@ button:disabled {
   right: 16px;
   left: 16px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
+  gap: 8px;
   pointer-events: none;
 }
 
@@ -634,6 +636,13 @@ button:disabled {
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
   backdrop-filter: blur(14px);
   pointer-events: auto;
+}
+
+/* The auto end margin pins the tool cluster to the right edge of the toolbar
+   without taking it out of flow, so the two groups can never overlap; when the
+   stage is too narrow for one row the cluster wraps below and stays right. */
+.view-switch {
+  margin-inline-end: auto;
 }
 
 .view-switch button {
@@ -672,8 +681,6 @@ button:disabled {
 }
 
 .tool-actions {
-  position: absolute;
-  right: 0;
   gap: 2px;
 }
 
@@ -684,7 +691,7 @@ button:disabled {
 
 .capture-toast {
   position: absolute;
-  top: 48px;
+  top: calc(100% + 8px);
   right: 0;
   z-index: 9;
   padding: 6px 11px;
@@ -720,7 +727,8 @@ button:disabled {
 }
 
 .volume-hud.top-left {
-  top: 17px;
+  /* Sits below the stage toolbar row, which now owns the full top band. */
+  top: 62px;
   left: 18px;
   display: grid;
   max-width: 220px;
@@ -3104,8 +3112,20 @@ button:disabled {
 }
 
 @media (max-width: 1350px) {
-  .stage-toolbar {
-    justify-content: flex-start;
+  /* Narrow stage: drop the secondary tool labels (tooltips + aria-labels keep
+     them reachable) so the tool cluster and the tab strip stay on one row. */
+  .slice-highlight-toggle span,
+  .crop-box-toggle span,
+  .slice-link-toggle span {
+    display: none;
+  }
+
+  .slice-highlight-toggle,
+  .crop-box-toggle,
+  .slice-link-toggle {
+    width: 32px;
+    padding: 0;
+    justify-content: center;
   }
 
   .volume-hud.top-left {
@@ -3121,7 +3141,15 @@ button:disabled {
   .series-copy i {
     display: none;
   }
+}
 
+/* Between the two-column and single-column workspaces the stage pane is narrow
+   enough that the toolbar wraps the tool cluster onto a second row; drop the MPR
+   plane switch below it so the two never overlap. */
+@media (min-width: 691px) and (max-width: 1180px) {
+  .mpr-plane-switch {
+    top: 108px;
+  }
 }
 
 @media (max-width: 920px) {
@@ -3204,7 +3232,6 @@ button:disabled {
     top: 9px;
     right: 9px;
     left: 9px;
-    justify-content: flex-start;
   }
 
   .tool-actions .reset-view-button {
@@ -3224,17 +3251,8 @@ button:disabled {
     font-size: 8.5px;
   }
 
-  .slice-highlight-toggle span,
-  .crop-box-toggle span,
   .tool-actions .icon-button:nth-last-child(2) {
     display: none;
-  }
-
-  .slice-highlight-toggle,
-  .crop-box-toggle {
-    width: 32px;
-    padding: 0;
-    justify-content: center;
   }
 
   .crop-face-handle {
@@ -3265,16 +3283,6 @@ button:disabled {
   .layout-compare .compare-empty-pane {
     border-right: 0;
     border-bottom: 1px solid rgba(98, 169, 184, 0.22);
-  }
-
-  .slice-link-toggle span {
-    display: none;
-  }
-
-  .slice-link-toggle {
-    width: 32px;
-    padding: 0;
-    justify-content: center;
   }
 
   .slice-viewport {

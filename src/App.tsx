@@ -24,12 +24,15 @@ import {
 import { useDicomLoader } from './hooks/useDicomLoader'
 import { useVolumeReconstruction } from './hooks/useVolumeReconstruction'
 import { chooseDirectory, filesFromDrop } from './lib/fileAccess'
+import { isTextEntryTarget, targetActivatesOnKey } from './lib/keyboardShortcuts'
 import {
   anatomicalPlaneFromOrientation,
   resliceVolume,
   sourcePointToPlane,
 } from './lib/mpr'
+import { isReconstructionReady } from './lib/reconstructVolume'
 import { compositeCompareSlicePng, exportCapturePng, type CaptureExportResult } from './lib/sliceCapture'
+import { FIT_VIEW, type ViewTransform } from './lib/sliceView'
 import {
   createDemoVolume,
   mapRelativeSliceIndex,
@@ -47,6 +50,7 @@ import type {
   AnatomicalPlane,
   CropBounds,
   SeriesSummary,
+  Vec3Tuple,
   VolumeData,
   VolumeSettings,
 } from './types'
@@ -55,7 +59,7 @@ import { EmptyStage } from './components/EmptyStage'
 import { ScanLibrary } from './components/ScanLibrary'
 import { SeriesPanel } from './components/SeriesPanel'
 import { ShortcutSheet } from './components/ShortcutSheet'
-import { FIT_VIEW, SliceViewer, type SliceViewerHandle, type ViewTransform } from './components/SliceViewer'
+import { SliceViewer, type SliceViewerHandle } from './components/SliceViewer'
 import type { ViewerStageHandle, VolumeSlicePick } from './components/ViewerStage'
 
 const ViewerStage = lazy(() =>
@@ -181,6 +185,17 @@ export default function App() {
     () => (mprSourceVolume ? resliceVolume(mprSourceVolume, slicePlane) : null),
     [mprSourceVolume, slicePlane],
   )
+  /**
+   * Grid the 3D view and every non-acquired MPR reformat sample from. Reconstruction
+   * scales the acquired in-plane grid to the device texture budget, so reformat sizes
+   * follow this, not the acquired columns/rows.
+   */
+  const renderGrid = useMemo<Vec3Tuple | null>(() => {
+    if (!volume) return null
+    return reconstructionEnabled && reconstruction.volume?.seriesId === volume.seriesId
+      ? reconstruction.volume.dimensions
+      : volume.dimensions
+  }, [reconstruction.volume, reconstructionEnabled, volume])
   const primarySliceVolume =
     viewerLayout === 'slice' || viewerLayout === 'split' ? mprVolume : volume
 
@@ -792,14 +807,7 @@ export default function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLSelectElement ||
-        (target instanceof HTMLElement && target.isContentEditable)
-      ) {
-        return
-      }
+      if (isTextEntryTarget(target)) return
 
       // Discoverability sheet: toggle on ?, dismiss on Esc. Works even when a
       // toolbar button is focused so the Help control can be keyboard-driven.
@@ -815,7 +823,10 @@ export default function App() {
       }
       if (shortcutSheetOpen) return
 
-      if (target instanceof HTMLButtonElement) return
+      // A focused button/link consumes Space and Enter itself; running a viewer
+      // shortcut on those would double-fire the control. Every other shortcut
+      // keeps working while a toolbar control holds focus after a click.
+      if (targetActivatesOnKey(target, event.key)) return
       if (event.key.toLowerCase() === 'r') viewerRef.current?.resetView()
       if (event.key.toLowerCase() === 'f') toggleStageFullscreen()
       if (event.key.toLowerCase() === 's') void captureActiveView()
@@ -1200,9 +1211,9 @@ export default function App() {
                           data-camera-projection={cameraProjection}
                           data-crop-editing={cropEditing}
                           data-slice-plane={slicePlane}
-                          data-reconstructed-depth={reconstructionEnabled && reconstruction.volume?.seriesId === volume.seriesId
-                            ? reconstruction.volume.dimensions[2]
-                            : volume.dimensions[2]}
+                          data-reconstructed-width={renderGrid?.[0] ?? volume.dimensions[0]}
+                          data-reconstructed-height={renderGrid?.[1] ?? volume.dimensions[1]}
+                          data-reconstructed-depth={renderGrid?.[2] ?? volume.dimensions[2]}
                           data-synthetic-slices={reconstruction.volume?.seriesId === volume.seriesId
                             ? reconstruction.volume.syntheticSlices
                             : 0}
@@ -1350,7 +1361,7 @@ export default function App() {
             projection={cameraProjection}
             onProjectionChange={setCameraProjection}
             reconstructionEnabled={reconstructionEnabled}
-            reconstructionReady={reconstruction.volume?.seriesId === volume?.seriesId}
+            reconstructionReady={isReconstructionReady(reconstruction.volume, volume)}
             reconstructionStatus={reconstruction.status}
             reconstructionMessage={reconstruction.message}
             onReconstructionEnabledChange={handleReconstructionEnabledChange}
