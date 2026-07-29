@@ -392,7 +392,11 @@ export default function App() {
         const local = series.find((entry) => entry.id === id)
         if (local) {
           cancelPendingOpen()
-          // Primary load-series replaces any compare onVolume — drop the opening flag.
+          // Cancel in-flight worker load (compare or prior primary). load-series alone does
+          // not bump jobGeneration; without cancel the compare job can still post volume-ready
+          // after pendingOnVolume is cleared and install B as primary.
+          cancelInFlight()
+          // Drop compare-open flag so busy does not stick after abandon.
           if (compareOpeningIdRef.current) {
             compareOpeningIdRef.current = null
             setCompareOpeningId(null)
@@ -406,7 +410,7 @@ export default function App() {
     window.addEventListener('popstate', navigateFromHistory)
     if (bundledSeries.length && window.location.hash) navigateFromHistory()
     return () => window.removeEventListener('popstate', navigateFromHistory)
-  }, [bundledSeries, cancelPendingOpen, clearCompare, loadSeries, openBundledSeries, series])
+  }, [bundledSeries, cancelInFlight, cancelPendingOpen, clearCompare, loadSeries, openBundledSeries, series])
 
   const goHome = useCallback((pushHistory = true) => {
     cancelPendingOpen()
