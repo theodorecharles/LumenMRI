@@ -24,8 +24,18 @@ import {
 import { useDicomLoader } from './hooks/useDicomLoader'
 import { useVolumeReconstruction } from './hooks/useVolumeReconstruction'
 import { chooseDirectory, filesFromDrop } from './lib/fileAccess'
-import { compositeCompareSlicePng } from './lib/sliceCapture'
-import { createDemoVolume, mapRelativeSliceIndex, midSliceIndex } from './lib/volume'
+import {
+  anatomicalPlaneFromOrientation,
+  resliceVolume,
+  sourcePointToPlane,
+} from './lib/mpr'
+import { compositeCompareSlicePng, exportCapturePng, type CaptureExportResult } from './lib/sliceCapture'
+import {
+  createDemoVolume,
+  mapRelativeSliceIndex,
+  midSliceIndex,
+  sliceIndexFromStackFraction,
+} from './lib/volume'
 import {
   bundledSeriesSummary,
   loadBundledCatalog,
@@ -33,13 +43,19 @@ import {
   type BundledCatalog,
   type BundledSeries,
 } from './lib/bundledVolume'
-import type { CropBounds, SeriesSummary, VolumeData, VolumeSettings } from './types'
+import type {
+  AnatomicalPlane,
+  CropBounds,
+  SeriesSummary,
+  VolumeData,
+  VolumeSettings,
+} from './types'
 import { ControlPanel } from './components/ControlPanel'
 import { EmptyStage } from './components/EmptyStage'
 import { ScanLibrary } from './components/ScanLibrary'
 import { SeriesPanel } from './components/SeriesPanel'
 import { ShortcutSheet } from './components/ShortcutSheet'
-import { SliceViewer, type SliceViewerHandle } from './components/SliceViewer'
+import { FIT_VIEW, SliceViewer, type SliceViewerHandle, type ViewTransform } from './components/SliceViewer'
 import type { ViewerStageHandle, VolumeSlicePick } from './components/ViewerStage'
 
 const ViewerStage = lazy(() =>
@@ -108,7 +124,17 @@ export default function App() {
   const [compareSettings, setCompareSettings] = useState(COMPARE_WL_DEFAULT)
   const [compareSliceIndex, setCompareSliceIndex] = useState(0)
   const [slicesLinked, setSlicesLinked] = useState(true)
+  /** Mirror pan/zoom + window/level across Compare panes (independent of depth link). */
+  const [viewLinked, setViewLinked] = useState(true)
+  const [sliceViewA, setSliceViewA] = useState<ViewTransform>(FIT_VIEW)
+  const [sliceViewB, setSliceViewB] = useState<ViewTransform>(FIT_VIEW)
   const [volumeSettings, setVolumeSettings] = useState(DEFAULT_VOLUME_SETTINGS)
+  const viewLinkedRef = useRef(viewLinked)
+  const sliceViewARef = useRef(sliceViewA)
+  const volumeSettingsRef = useRef(volumeSettings)
+  viewLinkedRef.current = viewLinked
+  sliceViewARef.current = sliceViewA
+  volumeSettingsRef.current = volumeSettings
   const [autoRotate, setAutoRotate] = useState(false)
   const [reconstructionEnabled, setReconstructionEnabled] = useState(true)
   /** True only when Acquired was forced by a recon error — not a user mode pick. */
@@ -116,6 +142,7 @@ export default function App() {
   const [cameraProjection, setCameraProjection] = useState<'perspective' | 'isometric'>('perspective')
   const [viewerLayout, setViewerLayout] = useState<ViewerLayout>('volume')
   const [sliceIndex, setSliceIndex] = useState(0)
+  const [slicePlane, setSlicePlane] = useState<AnatomicalPlane>('axial')
   sliceIndexRef.current = sliceIndex
   compareSliceIndexRef.current = compareSliceIndex
   const [showSliceHighlight, setShowSliceHighlight] = useState(false)
@@ -124,6 +151,9 @@ export default function App() {
   const [isDragging, setIsDragging] = useState(false)
   const [isStageFullscreen, setIsStageFullscreen] = useState(false)
   const [shortcutSheetOpen, setShortcutSheetOpen] = useState(false)
+  /** Brief "Copied" toast after a successful clipboard capture. */
+  const [captureToast, setCaptureToast] = useState<string | null>(null)
+  const captureToastTimerRef = useRef<number | null>(null)
   /** Brief 2D crosshair flash after a 3D volume slice pick (token forces re-trigger). */
   const [slicePickFlash, setSlicePickFlash] = useState<{
     token: number
@@ -131,6 +161,28 @@ export default function App() {
     y: number
   } | null>(null)
   const slicePickFlashTokenRef = useRef(0)
+  const acquiredPlane = anatomicalPlaneFromOrientation(volume?.orientation ?? 'Axial')
+  const slicePlaneIsAcquired = slicePlane === acquiredPlane
+  const enhancedMprSource = useMemo<VolumeData | null>(() => {
+    const enhanced = reconstructionEnabled ? reconstruction.volume : null
+    if (!volume || !enhanced || enhanced.seriesId !== volume.seriesId) return volume
+    return {
+      ...volume,
+      seriesId: `${volume.seriesId}::shape-reconstruction`,
+      data: enhanced.data,
+      dimensions: enhanced.dimensions,
+      spacing: enhanced.spacing,
+      physicalSize: volume.physicalSize,
+      sliceCount: enhanced.dimensions[2],
+    }
+  }, [reconstruction.volume, reconstructionEnabled, volume])
+  const mprSourceVolume = slicePlaneIsAcquired ? volume : enhancedMprSource
+  const mprVolume = useMemo(
+    () => (mprSourceVolume ? resliceVolume(mprSourceVolume, slicePlane) : null),
+    [mprSourceVolume, slicePlane],
+  )
+  const primarySliceVolume =
+    viewerLayout === 'slice' || viewerLayout === 'split' ? mprVolume : volume
 
   const workerBusy = progress.phase === 'scanning' || progress.phase === 'loading'
   const busy = workerBusy || openingId !== null || compareOpeningId !== null
@@ -163,7 +215,60 @@ export default function App() {
     setCompareVolume(null)
     setCompareSliceIndex(0)
     setCompareSettings(COMPARE_WL_DEFAULT)
+    setSliceViewB(FIT_VIEW)
   }, [])
+
+  const handleSliceViewA = useCallback((next: ViewTransform) => {
+    setSliceViewA(next)
+    if (viewLinked) setSliceViewB(next)
+  }, [viewLinked])
+
+  const handleSliceViewB = useCallback((next: ViewTransform) => {
+    setSliceViewB(next)
+    if (viewLinked) setSliceViewA(next)
+  }, [viewLinked])
+
+  const handlePrimaryVolumeSettings = useCallback((patch: Partial<VolumeSettings>) => {
+    setVolumeSettings((current) => ({ ...current, ...patch }))
+    if (
+      viewLinked
+      && (patch.window !== undefined || patch.level !== undefined)
+    ) {
+      setCompareSettings((current) => ({
+        window: patch.window ?? current.window,
+        level: patch.level ?? current.level,
+      }))
+    }
+  }, [viewLinked])
+
+  const handleCompareVolumeSettings = useCallback((patch: Partial<VolumeSettings>) => {
+    if (patch.window === undefined && patch.level === undefined) return
+    if (viewLinked) {
+      setVolumeSettings((current) => ({
+        ...current,
+        ...(patch.window !== undefined ? { window: patch.window } : null),
+        ...(patch.level !== undefined ? { level: patch.level } : null),
+      }))
+      setCompareSettings((current) => ({
+        window: patch.window ?? current.window,
+        level: patch.level ?? current.level,
+      }))
+      return
+    }
+    setCompareSettings((current) => ({
+      window: patch.window ?? current.window,
+      level: patch.level ?? current.level,
+    }))
+  }, [viewLinked])
+
+  const enableViewLink = useCallback(() => {
+    setViewLinked(true)
+    setSliceViewB(sliceViewA)
+    setCompareSettings({
+      window: volumeSettings.window,
+      level: volumeSettings.level,
+    })
+  }, [sliceViewA, volumeSettings.level, volumeSettings.window])
 
   useEffect(() => {
     let cancelled = false
@@ -292,13 +397,15 @@ export default function App() {
       if (!selection.supported || selection.id === activeSeriesId) return
 
       const applyCompareVolume = (next: VolumeData) => {
+        const primarySettings = volumeSettingsRef.current
         rememberVolume(next)
         setCompareVolume(next)
         setCompareSeriesId(next.seriesId)
         setCompareSettings({
-          window: volumeSettings.window,
-          level: volumeSettings.level,
+          window: primarySettings.window,
+          level: primarySettings.level,
         })
+        setSliceViewB(viewLinkedRef.current ? sliceViewARef.current : FIT_VIEW)
         const primaryDepth = volume?.dimensions[2] ?? next.dimensions[2]
         const primaryIndex = volume ? sliceIndexRef.current : midSliceIndex(next.dimensions[2])
         setCompareSliceIndex(
@@ -362,8 +469,6 @@ export default function App() {
       slicesLinked,
       viewerLayout,
       volume,
-      volumeSettings.level,
-      volumeSettings.window,
     ],
   )
 
@@ -489,6 +594,7 @@ export default function App() {
       return
     }
     rememberVolume(volume)
+    setSlicePlane(anatomicalPlaneFromOrientation(volume.orientation))
     const nextDepth = volume.dimensions[2]
     const previousDepth = previousDepthRef.current
     let nextSlice: number
@@ -520,8 +626,8 @@ export default function App() {
 
   const setPrimarySliceIndex = useCallback(
     (index: number) => {
-      if (!volume) return
-      const depth = volume.dimensions[2]
+      if (!primarySliceVolume) return
+      const depth = primarySliceVolume.dimensions[2]
       const next = Math.max(0, Math.min(depth - 1, index))
       setSliceIndex(next)
       if (slicesLinked && compareVolume) {
@@ -530,7 +636,7 @@ export default function App() {
         )
       }
     },
-    [compareVolume, slicesLinked, volume],
+    [compareVolume, primarySliceVolume, slicesLinked],
   )
 
   const setSecondarySliceIndex = useCallback(
@@ -539,12 +645,47 @@ export default function App() {
       const depth = compareVolume.dimensions[2]
       const next = Math.max(0, Math.min(depth - 1, index))
       setCompareSliceIndex(next)
-      if (slicesLinked && volume) {
-        setSliceIndex(mapRelativeSliceIndex(next, depth, volume.dimensions[2]))
+      if (slicesLinked && primarySliceVolume) {
+        setSliceIndex(mapRelativeSliceIndex(next, depth, primarySliceVolume.dimensions[2]))
       }
     },
-    [compareVolume, slicesLinked, volume],
+    [compareVolume, primarySliceVolume, slicesLinked],
   )
+
+  useEffect(() => {
+    if (
+      (viewerLayout !== 'volume' && viewerLayout !== 'compare')
+      || !volume
+      || slicePlaneIsAcquired
+    ) return
+    const next = midSliceIndex(volume.dimensions[2])
+    setSlicePlane(acquiredPlane)
+    setSliceIndex(next)
+    if (slicesLinked && compareVolume) {
+      setCompareSliceIndex(
+        mapRelativeSliceIndex(next, volume.dimensions[2], compareVolume.dimensions[2]),
+      )
+    }
+  }, [
+    acquiredPlane,
+    compareVolume,
+    slicePlaneIsAcquired,
+    slicesLinked,
+    viewerLayout,
+    volume,
+  ])
+
+  const changeSlicePlane = useCallback((nextPlane: AnatomicalPlane) => {
+    if (!volume || nextPlane === slicePlane) return
+    sliceViewerRef.current?.pauseCine()
+    const nextSource = nextPlane === acquiredPlane ? volume : enhancedMprSource ?? volume
+    const nextVolume = resliceVolume(nextSource, nextPlane)
+    setSlicePlane(nextPlane)
+    setSliceIndex(midSliceIndex(nextVolume.dimensions[2]))
+    setSlicePickFlash(null)
+    setCropEditing(false)
+    setShowSliceHighlight(false)
+  }, [acquiredPlane, enhancedMprSource, slicePlane, volume])
 
   useEffect(() => {
     if (cropEditing) setAutoRotate(false)
@@ -553,15 +694,19 @@ export default function App() {
   const slicePickEnabled = showSliceHighlight || viewerLayout === 'split'
 
   const handleVolumeSlicePick = useCallback((pick: VolumeSlicePick) => {
+    if (!mprVolume) return
+    const point = sourcePointToPlane(pick.sourceFractions, acquiredPlane, slicePlane)
     // Route through setPrimarySliceIndex so Linked mode maps compare pane B.
-    setPrimarySliceIndex(pick.sliceIndex)
+    setPrimarySliceIndex(
+      sliceIndexFromStackFraction(point.stackFraction, mprVolume.dimensions[2]),
+    )
     slicePickFlashTokenRef.current += 1
     setSlicePickFlash({
       token: slicePickFlashTokenRef.current,
-      x: pick.x,
-      y: pick.y,
+      x: point.x,
+      y: point.y,
     })
-  }, [setPrimarySliceIndex])
+  }, [acquiredPlane, mprVolume, setPrimarySliceIndex, slicePlane])
 
   const toggleStageFullscreen = useCallback(() => {
     if (isStageFullscreen) {
@@ -595,33 +740,54 @@ export default function App() {
     if (screen !== 'viewer') setIsStageFullscreen(false)
   }, [screen])
 
-  const captureActiveView = useCallback(() => {
+  const showCaptureToast = useCallback((message: string) => {
+    setCaptureToast(message)
+    if (captureToastTimerRef.current !== null) {
+      window.clearTimeout(captureToastTimerRef.current)
+    }
+    captureToastTimerRef.current = window.setTimeout(() => {
+      setCaptureToast(null)
+      captureToastTimerRef.current = null
+    }, 1800)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (captureToastTimerRef.current !== null) {
+        window.clearTimeout(captureToastTimerRef.current)
+      }
+    }
+  }, [])
+
+  const captureActiveView = useCallback(async () => {
+    let result: CaptureExportResult | null = null
     if (viewerLayout === 'compare') {
       const left = sliceViewerRef.current?.captureAnnotatedCanvas()
       if (!left) return
       const volB = compareVolume
       const right = volB ? compareSliceViewerRef.current?.captureAnnotatedCanvas() : null
-      const link = document.createElement('a')
       if (volB && right) {
         const leftSlug = volume
           ? volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
           : 'pane-a'
         const rightSlug = volB.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
-        link.download = `lumen-compare-${leftSlug}-vs-${rightSlug}.png`
-        link.href = compositeCompareSlicePng({ left, right, leftLabel: 'A', rightLabel: 'B' })
+        const filename = `lumen-compare-${leftSlug}-vs-${rightSlug}.png`
+        const dataUrl = compositeCompareSlicePng({ left, right, leftLabel: 'A', rightLabel: 'B' })
+        result = await exportCapturePng(dataUrl, filename)
       } else {
         const slug = volume
           ? volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
           : 'pane-a'
-        link.download = `lumen-${slug}-slice-${sliceIndex + 1}.png`
-        link.href = left.toDataURL('image/png')
+        const filename = `lumen-${slug}-slice-${sliceIndex + 1}.png`
+        result = await exportCapturePng(left, filename)
       }
-      link.click()
-      return
+    } else if (viewerLayout === 'slice' || viewerLayout === 'split') {
+      result = (await sliceViewerRef.current?.capture()) ?? null
+    } else {
+      result = (await viewerRef.current?.capture()) ?? null
     }
-    if (viewerLayout === 'slice') sliceViewerRef.current?.capture()
-    else viewerRef.current?.capture()
-  }, [compareVolume, sliceIndex, viewerLayout, volume])
+    if (result === 'clipboard') showCaptureToast('Copied')
+  }, [compareVolume, showCaptureToast, sliceIndex, viewerLayout, volume])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -652,7 +818,7 @@ export default function App() {
       if (target instanceof HTMLButtonElement) return
       if (event.key.toLowerCase() === 'r') viewerRef.current?.resetView()
       if (event.key.toLowerCase() === 'f') toggleStageFullscreen()
-      if (event.key.toLowerCase() === 's') captureActiveView()
+      if (event.key.toLowerCase() === 's') void captureActiveView()
       if (event.key.toLowerCase() === 'l') goHome()
       if (event.key === 'Escape' && isStageFullscreen && !document.fullscreenElement) {
         setIsStageFullscreen(false)
@@ -669,8 +835,8 @@ export default function App() {
         event.preventDefault()
         sliceViewerRef.current?.toggleCine()
       }
-      if (volume) {
-        const depth = volume.dimensions[2]
+      if (primarySliceVolume) {
+        const depth = primarySliceVolume.dimensions[2]
         if (event.key === 'Home') {
           event.preventDefault()
           // Match step/slider: user slice jumps pause cine.
@@ -698,7 +864,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [captureActiveView, goHome, isStageFullscreen, setPrimarySliceIndex, shortcutSheetOpen, toggleStageFullscreen, viewerLayout, volume])
+  }, [captureActiveView, goHome, isStageFullscreen, primarySliceVolume, setPrimarySliceIndex, shortcutSheetOpen, toggleStageFullscreen, viewerLayout])
 
   const onDrop = async (event: React.DragEvent) => {
     event.preventDefault()
@@ -847,6 +1013,7 @@ export default function App() {
                           title={slicesLinked
                             ? 'Slices linked by relative depth — click to unlock'
                             : 'Slices independent — click to link by relative depth'}
+                          data-testid="compare-depth-link-toggle"
                           onClick={() => {
                             setSlicesLinked((linked) => {
                               const next = !linked
@@ -864,7 +1031,29 @@ export default function App() {
                           }}
                         >
                           {slicesLinked ? <Link2 size={14} /> : <Link2Off size={14} />}
-                          <span>{slicesLinked ? 'Linked' : 'Unlocked'}</span>
+                          <span>{slicesLinked ? 'Depth linked' : 'Depth free'}</span>
+                        </button>
+                        <button
+                          className={viewLinked ? 'slice-link-toggle active' : 'slice-link-toggle'}
+                          type="button"
+                          aria-pressed={viewLinked}
+                          aria-label={viewLinked
+                            ? 'Unlock linked pan, zoom, and window/level'
+                            : 'Link pan, zoom, and window/level'}
+                          title={viewLinked
+                            ? 'Pan, zoom, and window/level linked — click to unlock'
+                            : 'Pan, zoom, and window/level independent — click to link (seeds B from A)'}
+                          data-testid="compare-view-link-toggle"
+                          onClick={() => {
+                            if (viewLinked) {
+                              setViewLinked(false)
+                              return
+                            }
+                            enableViewLink()
+                          }}
+                        >
+                          {viewLinked ? <Link2 size={14} /> : <Link2Off size={14} />}
+                          <span>{viewLinked ? 'View linked' : 'View free'}</span>
                         </button>
                         {compareSeriesId ? (
                           <button
@@ -907,7 +1096,12 @@ export default function App() {
                           type="button"
                           aria-pressed={showSliceHighlight}
                           aria-label={showSliceHighlight ? 'Hide selected slice in 3D' : 'Show selected slice in 3D'}
-                          title={showSliceHighlight ? 'Hide selected slice in 3D' : 'Show selected slice in 3D'}
+                          title={!slicePlaneIsAcquired
+                            ? '3D highlight is available on the acquired plane'
+                            : showSliceHighlight
+                              ? 'Hide selected slice in 3D'
+                              : 'Show selected slice in 3D'}
+                          disabled={!slicePlaneIsAcquired}
                           onClick={() => setShowSliceHighlight((value) => !value)}
                         >
                           <ScanLine size={14} /><span>Slice plane</span>
@@ -923,7 +1117,7 @@ export default function App() {
                         <button className="icon-button reset-view-button" type="button" title="Reset view (R)" onClick={() => viewerRef.current?.resetView()}><RotateCcw size={16} /></button>
                       </>
                     ) : null}
-                    <button className="icon-button" type="button" title="Save image (S)" onClick={captureActiveView}><Camera size={16} /></button>
+                    <button className="icon-button" type="button" title="Save image (S)" onClick={() => void captureActiveView()}><Camera size={16} /></button>
                     <button
                       className="icon-button fullscreen-button"
                       type="button"
@@ -935,6 +1129,11 @@ export default function App() {
                       {isStageFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
                     </button>
                   </div>
+                  {captureToast ? (
+                    <div className="capture-toast" role="status" aria-live="polite">
+                      {captureToast}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className={`stage-view-grid layout-${viewerLayout}`}>
@@ -946,7 +1145,7 @@ export default function App() {
                         sliceIndex={sliceIndex}
                         onSliceChange={setPrimarySliceIndex}
                         volumeSettings={volumeSettings}
-                        onVolumeSettingsChange={(patch) => setVolumeSettings((current) => ({ ...current, ...patch }))}
+                        onVolumeSettingsChange={handlePrimaryVolumeSettings}
                         cropBounds={cropBounds}
                         onCropChange={setCropBounds}
                         cropEditing={false}
@@ -954,6 +1153,8 @@ export default function App() {
                         viewerLayout={viewerLayout}
                         paneLabel="A"
                         hideCropControls
+                        viewTransform={sliceViewA}
+                        onViewTransformChange={handleSliceViewA}
                       />
                       {compareVolume ? (
                         <SliceViewer
@@ -961,15 +1162,10 @@ export default function App() {
                           volume={compareVolume}
                           sliceIndex={compareSliceIndex}
                           onSliceChange={setSecondarySliceIndex}
-                          volumeSettings={{ ...volumeSettings, ...compareSettings }}
-                          onVolumeSettingsChange={(patch) => {
-                            if (patch.window !== undefined || patch.level !== undefined) {
-                              setCompareSettings((current) => ({
-                                window: patch.window ?? current.window,
-                                level: patch.level ?? current.level,
-                              }))
-                            }
-                          }}
+                          volumeSettings={viewLinked
+                            ? volumeSettings
+                            : { ...volumeSettings, ...compareSettings }}
+                          onVolumeSettingsChange={handleCompareVolumeSettings}
                           cropBounds={FULL_CROP}
                           onCropChange={() => undefined}
                           cropEditing={false}
@@ -977,6 +1173,9 @@ export default function App() {
                           viewerLayout={viewerLayout}
                           paneLabel="B"
                           hideCropControls
+                          viewTransform={sliceViewB}
+                          onViewTransformChange={handleSliceViewB}
+                          resetControlledViewOnVolumeChange={!viewLinked}
                         />
                       ) : (
                         <div className="compare-empty-pane" role="status">
@@ -1000,6 +1199,7 @@ export default function App() {
                           data-reconstruction-mode={reconstructionEnabled ? 'enhanced' : 'acquired'}
                           data-camera-projection={cameraProjection}
                           data-crop-editing={cropEditing}
+                          data-slice-plane={slicePlane}
                           data-reconstructed-depth={reconstructionEnabled && reconstruction.volume?.seriesId === volume.seriesId
                             ? reconstruction.volume.dimensions[2]
                             : volume.dimensions[2]}
@@ -1015,8 +1215,10 @@ export default function App() {
                               projection={cameraProjection}
                               volumeSettings={volumeSettings}
                               autoRotate={autoRotate}
-                              sliceIndex={sliceIndex}
-                              showSliceHighlight={showSliceHighlight}
+                              sliceIndex={slicePlaneIsAcquired
+                                ? sliceIndex
+                                : midSliceIndex(volume.dimensions[2])}
+                              showSliceHighlight={showSliceHighlight && slicePlaneIsAcquired}
                               cropBounds={cropBounds}
                               cropEditing={cropEditing}
                               onCropChange={setCropBounds}
@@ -1064,17 +1266,21 @@ export default function App() {
                       {viewerLayout !== 'volume' ? (
                         <SliceViewer
                           ref={sliceViewerRef}
-                          volume={volume}
+                          volume={mprVolume ?? volume}
                           sliceIndex={sliceIndex}
                           onSliceChange={setPrimarySliceIndex}
                           volumeSettings={volumeSettings}
                           onVolumeSettingsChange={(patch) => setVolumeSettings((current) => ({ ...current, ...patch }))}
-                          cropBounds={cropBounds}
-                          onCropChange={setCropBounds}
-                          cropEditing={cropEditing}
-                          onCropEditingChange={setCropEditing}
+                          cropBounds={slicePlaneIsAcquired ? cropBounds : FULL_CROP}
+                          onCropChange={slicePlaneIsAcquired ? setCropBounds : () => undefined}
+                          cropEditing={slicePlaneIsAcquired && cropEditing}
+                          onCropEditingChange={slicePlaneIsAcquired ? setCropEditing : () => undefined}
                           viewerLayout={viewerLayout}
                           pickFlash={slicePickFlash}
+                          hideCropControls={!slicePlaneIsAcquired}
+                          slicePlane={slicePlane}
+                          acquiredPlane={acquiredPlane}
+                          onSlicePlaneChange={changeSlicePlane}
                         />
                       ) : null}
                     </>
@@ -1132,7 +1338,15 @@ export default function App() {
 
           <ControlPanel
             volumeSettings={volumeSettings}
-            setVolumeSettings={setVolumeSettings}
+            setVolumeSettings={(settings) => {
+              setVolumeSettings(settings)
+              if (viewLinked) {
+                setCompareSettings({
+                  window: settings.window,
+                  level: settings.level,
+                })
+              }
+            }}
             projection={cameraProjection}
             onProjectionChange={setCameraProjection}
             reconstructionEnabled={reconstructionEnabled}

@@ -187,6 +187,7 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
   const maximum = Number(await sliceSlider.getAttribute('max'))
   await sliceSlider.fill(String(Math.max(0, maximum - 3)))
   await expect(sliceSlider).toHaveValue(String(Math.max(0, maximum - 3)))
+
   await page.getByRole('button', { name: 'Crop 3D' }).click()
   const cropOverlay = page.getByTestId('crop-overlay')
   const cropBox = await cropOverlay.boundingBox()
@@ -228,12 +229,50 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
     await page.mouse.click(cropBox.x + cropBox.width * 0.5, cropBox.y + cropBox.height * 0.28)
   }
   await expect(page.locator('.measurement-label.angle')).toContainText('°')
-  await page.screenshot({ path: 'artifacts/linked-split-view.png', fullPage: true })
-  await page.getByRole('button', { name: 'Clear measurements on slice' }).click()
+  const measuredSlice = Number(await sliceSlider.inputValue())
+  const annotationInventory = page.getByTestId('annotation-inventory')
+  const annotationRows = page.getByTestId('annotation-inventory-row')
+  await expect(annotationInventory).toBeVisible()
+  await expect(annotationRows).toHaveCount(3)
+  await expect(annotationRows.filter({ hasText: 'Distance' })).toContainText('mm')
+  await expect(annotationRows.filter({ hasText: 'ROI' })).toContainText('mm²')
+  await expect(annotationRows.filter({ hasText: 'Angle' })).toContainText('°')
+
+  const probeSlice = measuredSlice < maximum ? measuredSlice + 1 : measuredSlice - 1
+  await sliceSlider.fill(String(probeSlice))
   await expect(page.locator('.measurement-label')).toHaveCount(0)
-  // Deselect active measure tool so plain left-drag is free; shift-drag still owns W/L.
-  await page.getByRole('button', { name: 'Angle measurement' }).click()
-  await expect(page.getByRole('button', { name: 'Angle measurement' })).toHaveAttribute('aria-pressed', 'false')
+  await expect(annotationRows).toHaveCount(3)
+  await page.getByRole('button', { name: 'Pixel intensity probe' }).click()
+  if (cropBox) {
+    await page.mouse.click(
+      cropBox.x + cropBox.width * 0.55,
+      cropBox.y + cropBox.height * 0.45,
+    )
+  }
+  await expect(page.getByTestId('pixel-probe-pin')).toHaveCount(1)
+  await expect(annotationRows).toHaveCount(4)
+  await expect(annotationRows.filter({ hasText: 'Probe' })).toContainText(
+    `SL ${String(probeSlice + 1).padStart(3, '0')}`,
+  )
+
+  // Per-slice clear removes the probe but preserves measurements elsewhere in the series.
+  await page.getByRole('button', { name: 'Clear measurements on slice' }).click()
+  await expect(page.getByTestId('pixel-probe-pin')).toHaveCount(0)
+  await expect(annotationRows).toHaveCount(3)
+
+  // Inventory rows jump back to their slice and flash the selected mark.
+  await annotationRows.filter({ hasText: 'ROI' }).click()
+  await expect(sliceSlider).toHaveValue(String(measuredSlice))
+  await expect(page.getByTestId('slice-pick-crosshair')).toBeVisible()
+  await expect(page.locator('.roi-measurement')).toHaveClass(/is-flashing/)
+  await expect(annotationRows.filter({ hasText: 'ROI' })).toHaveClass(/selected/)
+  await page.screenshot({ path: 'artifacts/linked-split-view.png', fullPage: true })
+  await page.getByRole('button', { name: 'Clear all annotations on series' }).click()
+  await expect(annotationInventory).toHaveCount(0)
+  await expect(page.locator('.measurement-label')).toHaveCount(0)
+  // Deselect active probe tool so plain left-drag is free; shift-drag still owns W/L.
+  await page.getByRole('button', { name: 'Pixel intensity probe' }).click()
+  await expect(page.getByRole('button', { name: 'Pixel intensity probe' })).toHaveAttribute('aria-pressed', 'false')
 
   const windowSlider = page.getByRole('slider', { name: 'Window' })
   const levelSlider = page.getByRole('slider', { name: 'Level' })
@@ -275,6 +314,97 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
   expect(pageErrors).toEqual([])
 })
 
+test('switches one 2D stack across orthogonal MPR planes', async ({ page }) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+
+  await page.goto('/')
+  const flair = page.locator('.scan-card').filter({ hasText: 'AX FLAIR' }).first()
+  await flair.locator('button').click()
+  await expect(page.locator('.viewer-canvas canvas')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('.viewer-stage-pane')).toHaveAttribute(
+    'data-reconstruction-status',
+    'ready',
+    { timeout: 120_000 },
+  )
+  await page.getByRole('tab', { name: /2D slice/ }).click()
+
+  const planeSwitch = page.getByRole('group', { name: 'MPR plane' })
+  const axialPlane = page.getByRole('button', { name: 'Axial plane (acquired)' })
+  const coronalPlane = page.getByRole('button', { name: 'Coronal plane' })
+  const sagittalPlane = page.getByRole('button', { name: 'Sagittal plane' })
+  await expect(planeSwitch).toBeVisible()
+  await expect(axialPlane).toHaveAttribute('aria-pressed', 'true')
+
+  await coronalPlane.click()
+  await expect(page.locator('.slice-viewer')).toHaveAttribute('data-slice-plane', 'coronal')
+  await expect(page.locator('.slice-meta-left')).toContainText('CORONAL')
+  await expect(page.locator('.slice-meta-left')).toContainText('416 × 149')
+  await expect(page.getByTestId('slice-canvas')).toHaveAttribute('width', '416')
+  await expect(page.getByTestId('slice-canvas')).toHaveAttribute('height', '149')
+  const coronalCanvasBox = await page.getByTestId('slice-canvas').boundingBox()
+  expect(coronalCanvasBox).not.toBeNull()
+  expect(coronalCanvasBox!.width / coronalCanvasBox!.height).toBeCloseTo(
+    (415 * 0.4492) / (148 * (3.9999764740342947 / 4)),
+    1,
+  )
+  await expect(page.locator('.slice-scale-ruler')).toHaveCount(2)
+  await expect(page.locator('.slice-scale-ruler').first()).toContainText('mm')
+
+  const mprOverlay = page.getByTestId('crop-overlay')
+  const mprBox = await mprOverlay.boundingBox()
+  expect(mprBox).not.toBeNull()
+  await page.getByRole('button', { name: 'Distance measurement' }).click()
+  if (mprBox) {
+    await page.mouse.move(mprBox.x + mprBox.width * 0.3, mprBox.y + mprBox.height * 0.34)
+    await page.mouse.down()
+    await page.mouse.move(
+      mprBox.x + mprBox.width * 0.68,
+      mprBox.y + mprBox.height * 0.61,
+      { steps: 7 },
+    )
+    await page.mouse.up()
+  }
+  await expect(page.locator('.measurement-label.distance')).toContainText('mm')
+  await page.getByRole('button', { name: 'Distance measurement' }).click()
+  await page.getByRole('button', { name: 'Pixel intensity probe' }).click()
+  if (mprBox) {
+    await page.mouse.click(
+      mprBox.x + mprBox.width * 0.52,
+      mprBox.y + mprBox.height * 0.48,
+    )
+  }
+  await expect(page.getByTestId('pixel-probe-pin')).toHaveCount(1)
+  await expect(page.locator('.pixel-probe-pin-label')).toBeVisible()
+  await page.screenshot({ path: 'artifacts/coronal-mpr-2d.png', fullPage: true })
+  await page.getByRole('button', { name: 'Pixel intensity probe' }).click()
+  await page.getByRole('button', { name: 'Clear measurements on slice' }).click()
+
+  const sliceSlider = page.getByRole('slider', { name: 'Displayed slice' })
+  const reformattedStart = Number(await sliceSlider.inputValue())
+  await page.getByRole('button', { name: 'Play cine' }).click()
+  await expect.poll(async () => Number(await sliceSlider.inputValue())).not.toBe(reformattedStart)
+  await page.getByRole('button', { name: 'Pause cine' }).click()
+
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByTitle('Save image (S)').click()
+  const download = await downloadPromise
+  expect(download.suggestedFilename()).toMatch(/coronal-slice-\d+\.png$/)
+
+  await sagittalPlane.click()
+  await expect(page.locator('.slice-viewer')).toHaveAttribute('data-slice-plane', 'sagittal')
+  await expect(page.getByTestId('slice-canvas')).toHaveAttribute('width', '512')
+  await expect(page.getByTestId('slice-canvas')).toHaveAttribute('height', '149')
+
+  await page.getByRole('tab', { name: /Split/ }).click()
+  await expect(page.locator('.viewer-canvas canvas')).toBeVisible()
+  await expect(planeSwitch).toBeVisible()
+  await expect(page.locator('.slice-viewer')).toHaveAttribute('data-slice-plane', 'sagittal')
+  await expect(page.getByRole('button', { name: /selected slice in 3D/i })).toBeDisabled()
+
+  expect(pageErrors).toEqual([])
+})
+
 test('opens the included shoulder study and returns through the Lumen brand', async ({ page }) => {
   const pageErrors: string[] = []
   page.on('pageerror', (error) => pageErrors.push(error.message))
@@ -294,6 +424,8 @@ test('opens the included shoulder study and returns through the Lumen brand', as
   expect(Number(await page.locator('.viewer-stage-pane').getAttribute('data-synthetic-slices'))).toBeGreaterThan(0)
   await page.getByRole('tab', { name: /Split/ }).click()
   await expect(page.getByTestId('slice-canvas')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Coronal plane (acquired)' }))
+    .toHaveAttribute('aria-pressed', 'true')
   await page.screenshot({ path: 'artifacts/shoulder-split-view.png', fullPage: true })
 
   await page.getByRole('link', { name: 'Lumen scan library' }).click()

@@ -8,8 +8,14 @@ import {
 } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import type { CropBounds, ReconstructedVolume, VolumeData, VolumeSettings } from '../types'
-import { compositeAnnotatedVolumePng } from '../lib/sliceCapture'
+import type {
+  CropBounds,
+  ReconstructedVolume,
+  Vec3Tuple,
+  VolumeData,
+  VolumeSettings,
+} from '../types'
+import { compositeAnnotatedVolumePng, exportCapturePng, type CaptureExportResult } from '../lib/sliceCapture'
 import {
   normalizePhysicalSize,
   PALETTES,
@@ -18,11 +24,12 @@ import {
 } from '../lib/volume'
 import { volumeFragmentShader, volumeVertexShader } from '../rendering/shaders'
 
-/** Result of Alt+click volume pick — stack index plus image-space fractions for the 2D flash. */
+/** Result of Alt+click volume pick in acquired image-space coordinates. */
 export interface VolumeSlicePick {
   sliceIndex: number
   x: number
   y: number
+  sourceFractions: Vec3Tuple
 }
 
 export type CameraView = 'perspective' | 'slices' | 'back' | 'side' | 'left' | 'top' | 'bottom'
@@ -31,7 +38,8 @@ export type RotationAxis = 'x' | 'y' | 'z'
 
 export interface ViewerStageHandle {
   resetView: () => void
-  capture: () => void
+  /** Export labeled volume PNG — clipboard when allowed, else download. Null if no runtime. */
+  capture: () => Promise<CaptureExportResult | null>
   toggleFullscreen: () => void
   setView: (view: CameraView) => void
   rotateVolume: (axis: RotationAxis) => void
@@ -163,6 +171,7 @@ function pickSliceOnVolume(
     sliceIndex: sliceIndexFromStackFraction(coords.stackFraction, stackDepth),
     x: coords.x,
     y: coords.y,
+    sourceFractions: [coords.x, coords.y, coords.stackFraction],
   }
 }
 
@@ -792,15 +801,14 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
             runtime.needsRender = true
           }
         },
-        capture: () => {
+        capture: async () => {
           const runtime = runtimeRef.current
-          if (!runtime) return
+          if (!runtime) return null
           runtime.renderer.render(runtime.scene, runtime.camera)
           const reconstructed = reconstruction?.seriesId === volume.seriesId ? reconstruction : null
           const dimensions = reconstructed?.dimensions ?? volume.dimensions
-          const link = document.createElement('a')
-          link.download = `lumen-${volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.png`
-          link.href = compositeAnnotatedVolumePng({
+          const filename = `lumen-${volume.description.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.png`
+          const dataUrl = compositeAnnotatedVolumePng({
             source: runtime.renderer.domElement,
             seriesName: volume.description,
             orientation: volume.orientation,
@@ -809,7 +817,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
             paletteName: volumeSettings.palette,
             cropActive: isCropped(cropBounds),
           })
-          link.click()
+          return exportCapturePng(dataUrl, filename)
         },
         toggleFullscreen: () => {
           const element = containerRef.current
