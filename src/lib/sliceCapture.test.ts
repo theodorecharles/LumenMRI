@@ -486,6 +486,35 @@ describe('exportCapturePng', () => {
     expect(write).toHaveBeenCalledOnce()
   })
 
+  it('starts clipboard writing before asynchronous canvas encoding completes', async () => {
+    const blob = new Blob(['png'], { type: 'image/png' })
+    let resolveBlob: BlobCallback | undefined
+    const source = {
+      toBlob: vi.fn((callback: BlobCallback) => {
+        resolveBlob = callback
+      }),
+      toDataURL: vi.fn(() => tinyPng),
+    } as unknown as HTMLCanvasElement
+    const ClipboardItemMock = vi.fn(function ClipboardItemMock(this: unknown, items: Record<string, unknown>) {
+      return { items }
+    })
+    const write = vi.fn((items: Array<{ items: Record<string, Promise<Blob>> }>) => {
+      return items[0].items['image/png'].then(() => undefined)
+    })
+    vi.stubGlobal('navigator', { clipboard: { write } })
+    vi.stubGlobal('ClipboardItem', ClipboardItemMock)
+
+    const resultPromise = exportCapturePng(source, 'lumen-canvas.png')
+
+    expect(write).toHaveBeenCalledOnce()
+    expect(resolveBlob).toBeTypeOf('function')
+    expect(ClipboardItemMock.mock.calls[0]?.[0]['image/png']).toBeInstanceOf(Promise)
+
+    resolveBlob?.(blob)
+    expect(await resultPromise).toBe('clipboard')
+    expect(source.toDataURL).not.toHaveBeenCalled()
+  })
+
   it('falls back to download when clipboard write rejects', async () => {
     const write = vi.fn(async () => {
       throw new Error('NotAllowedError')

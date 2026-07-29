@@ -642,24 +642,28 @@ export async function exportCapturePng(
   source: HTMLCanvasElement | string,
   filename: string,
 ): Promise<CaptureExportResult> {
-  const blob = await pngBlobFromSource(source)
+  const blobPromise = pngBlobFromSource(source)
   const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined
   const canWriteClipboard =
-    !!blob &&
     !!clipboard &&
     typeof clipboard.write === 'function' &&
     typeof ClipboardItem !== 'undefined'
 
-  if (canWriteClipboard && blob) {
+  if (canWriteClipboard) {
     try {
-      // Promise-wrapped blob is required on Safari; Chromium accepts either.
-      await clipboard.write([new ClipboardItem({ 'image/png': Promise.resolve(blob) })])
+      const clipboardBlobPromise = blobPromise.then((blob) => {
+        if (!blob) throw new Error('PNG encoding failed')
+        return blob
+      })
+      // Safari requires clipboard.write() before the initiating user gesture ends.
+      await clipboard.write([new ClipboardItem({ 'image/png': clipboardBlobPromise })])
       return 'clipboard'
     } catch {
       // Permission denied, insecure context, or image/png not supported.
     }
   }
 
+  const blob = await blobPromise
   if (typeof source === 'string') {
     triggerPngDownload(filename, source)
     return 'download'
