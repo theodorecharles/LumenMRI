@@ -387,6 +387,34 @@ function disposeObject(object: THREE.Object3D) {
   })
 }
 
+/**
+ * Minimal runtime shape the teardown path touches. Keeps the unmount cleanup unit-testable
+ * without a WebGL2 context.
+ */
+export interface ReleasableRuntime {
+  scene: THREE.Scene
+  renderer: Pick<THREE.WebGLRenderer, 'dispose' | 'forceContextLoss'>
+  volumeTexture: THREE.Texture | null
+  sliceTexture: THREE.Texture | null
+}
+
+/**
+ * Frees every GPU allocation the stage owns. `material.dispose()` does not free textures and
+ * `WebGLRenderer.dispose()` does not delete uploaded texture memory, so the Data3DTexture and the
+ * slice DataTexture must be disposed explicitly — before `renderer.dispose()` clears the property
+ * cache that maps them to their GL handles. `forceContextLoss()` then releases the context itself,
+ * which the browser otherwise keeps alive until it force-loses the oldest one.
+ */
+export function releaseRuntimeGpu(runtime: ReleasableRuntime) {
+  runtime.scene.children.forEach(disposeObject)
+  runtime.volumeTexture?.dispose()
+  runtime.sliceTexture?.dispose()
+  runtime.volumeTexture = null
+  runtime.sliceTexture = null
+  runtime.renderer.dispose()
+  runtime.renderer.forceContextLoss()
+}
+
 function visibleRadius(runtime: Runtime) {
   const [sizeX, sizeY, sizeZ] = runtime.volumeSize
   const cropWidth = (runtime.cropBounds.maxX - runtime.cropBounds.minX) * sizeX
@@ -856,6 +884,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
 
       if (!renderer.capabilities.isWebGL2) {
         renderer.dispose()
+        renderer.forceContextLoss()
         setRenderError('This viewer requires WebGL 2. Try a current Chrome, Edge, Firefox, or Safari.')
         return
       }
@@ -1005,8 +1034,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         renderer.domElement.removeEventListener('pointerdown', onPickPointerDown, true)
         window.removeEventListener('pointerup', onPickPointerUp)
         window.removeEventListener('pointercancel', onPickPointerCancel)
-        scene.children.forEach(disposeObject)
-        renderer.dispose()
+        releaseRuntimeGpu(runtime)
         renderer.domElement.remove()
         runtimeRef.current = null
       }
