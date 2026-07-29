@@ -39,7 +39,7 @@ import { EmptyStage } from './components/EmptyStage'
 import { ScanLibrary } from './components/ScanLibrary'
 import { SeriesPanel } from './components/SeriesPanel'
 import { ShortcutSheet } from './components/ShortcutSheet'
-import { SliceViewer, type SliceViewerHandle } from './components/SliceViewer'
+import { FIT_VIEW, SliceViewer, type SliceViewerHandle, type ViewTransform } from './components/SliceViewer'
 import type { ViewerStageHandle, VolumeSlicePick } from './components/ViewerStage'
 
 const ViewerStage = lazy(() =>
@@ -108,7 +108,17 @@ export default function App() {
   const [compareSettings, setCompareSettings] = useState(COMPARE_WL_DEFAULT)
   const [compareSliceIndex, setCompareSliceIndex] = useState(0)
   const [slicesLinked, setSlicesLinked] = useState(true)
+  /** Mirror pan/zoom + window/level across Compare panes (independent of depth link). */
+  const [viewLinked, setViewLinked] = useState(true)
+  const [sliceViewA, setSliceViewA] = useState<ViewTransform>(FIT_VIEW)
+  const [sliceViewB, setSliceViewB] = useState<ViewTransform>(FIT_VIEW)
   const [volumeSettings, setVolumeSettings] = useState(DEFAULT_VOLUME_SETTINGS)
+  const viewLinkedRef = useRef(viewLinked)
+  const sliceViewARef = useRef(sliceViewA)
+  const volumeSettingsRef = useRef(volumeSettings)
+  viewLinkedRef.current = viewLinked
+  sliceViewARef.current = sliceViewA
+  volumeSettingsRef.current = volumeSettings
   const [autoRotate, setAutoRotate] = useState(false)
   const [reconstructionEnabled, setReconstructionEnabled] = useState(true)
   /** True only when Acquired was forced by a recon error — not a user mode pick. */
@@ -163,7 +173,60 @@ export default function App() {
     setCompareVolume(null)
     setCompareSliceIndex(0)
     setCompareSettings(COMPARE_WL_DEFAULT)
+    setSliceViewB(FIT_VIEW)
   }, [])
+
+  const handleSliceViewA = useCallback((next: ViewTransform) => {
+    setSliceViewA(next)
+    if (viewLinked) setSliceViewB(next)
+  }, [viewLinked])
+
+  const handleSliceViewB = useCallback((next: ViewTransform) => {
+    setSliceViewB(next)
+    if (viewLinked) setSliceViewA(next)
+  }, [viewLinked])
+
+  const handlePrimaryVolumeSettings = useCallback((patch: Partial<VolumeSettings>) => {
+    setVolumeSettings((current) => ({ ...current, ...patch }))
+    if (
+      viewLinked
+      && (patch.window !== undefined || patch.level !== undefined)
+    ) {
+      setCompareSettings((current) => ({
+        window: patch.window ?? current.window,
+        level: patch.level ?? current.level,
+      }))
+    }
+  }, [viewLinked])
+
+  const handleCompareVolumeSettings = useCallback((patch: Partial<VolumeSettings>) => {
+    if (patch.window === undefined && patch.level === undefined) return
+    if (viewLinked) {
+      setVolumeSettings((current) => ({
+        ...current,
+        ...(patch.window !== undefined ? { window: patch.window } : null),
+        ...(patch.level !== undefined ? { level: patch.level } : null),
+      }))
+      setCompareSettings((current) => ({
+        window: patch.window ?? current.window,
+        level: patch.level ?? current.level,
+      }))
+      return
+    }
+    setCompareSettings((current) => ({
+      window: patch.window ?? current.window,
+      level: patch.level ?? current.level,
+    }))
+  }, [viewLinked])
+
+  const enableViewLink = useCallback(() => {
+    setViewLinked(true)
+    setSliceViewB(sliceViewA)
+    setCompareSettings({
+      window: volumeSettings.window,
+      level: volumeSettings.level,
+    })
+  }, [sliceViewA, volumeSettings.level, volumeSettings.window])
 
   useEffect(() => {
     let cancelled = false
@@ -292,13 +355,15 @@ export default function App() {
       if (!selection.supported || selection.id === activeSeriesId) return
 
       const applyCompareVolume = (next: VolumeData) => {
+        const primarySettings = volumeSettingsRef.current
         rememberVolume(next)
         setCompareVolume(next)
         setCompareSeriesId(next.seriesId)
         setCompareSettings({
-          window: volumeSettings.window,
-          level: volumeSettings.level,
+          window: primarySettings.window,
+          level: primarySettings.level,
         })
+        setSliceViewB(viewLinkedRef.current ? sliceViewARef.current : FIT_VIEW)
         const primaryDepth = volume?.dimensions[2] ?? next.dimensions[2]
         const primaryIndex = volume ? sliceIndexRef.current : midSliceIndex(next.dimensions[2])
         setCompareSliceIndex(
@@ -362,8 +427,6 @@ export default function App() {
       slicesLinked,
       viewerLayout,
       volume,
-      volumeSettings.level,
-      volumeSettings.window,
     ],
   )
 
@@ -847,6 +910,7 @@ export default function App() {
                           title={slicesLinked
                             ? 'Slices linked by relative depth — click to unlock'
                             : 'Slices independent — click to link by relative depth'}
+                          data-testid="compare-depth-link-toggle"
                           onClick={() => {
                             setSlicesLinked((linked) => {
                               const next = !linked
@@ -864,7 +928,29 @@ export default function App() {
                           }}
                         >
                           {slicesLinked ? <Link2 size={14} /> : <Link2Off size={14} />}
-                          <span>{slicesLinked ? 'Linked' : 'Unlocked'}</span>
+                          <span>{slicesLinked ? 'Depth linked' : 'Depth free'}</span>
+                        </button>
+                        <button
+                          className={viewLinked ? 'slice-link-toggle active' : 'slice-link-toggle'}
+                          type="button"
+                          aria-pressed={viewLinked}
+                          aria-label={viewLinked
+                            ? 'Unlock linked pan, zoom, and window/level'
+                            : 'Link pan, zoom, and window/level'}
+                          title={viewLinked
+                            ? 'Pan, zoom, and window/level linked — click to unlock'
+                            : 'Pan, zoom, and window/level independent — click to link (seeds B from A)'}
+                          data-testid="compare-view-link-toggle"
+                          onClick={() => {
+                            if (viewLinked) {
+                              setViewLinked(false)
+                              return
+                            }
+                            enableViewLink()
+                          }}
+                        >
+                          {viewLinked ? <Link2 size={14} /> : <Link2Off size={14} />}
+                          <span>{viewLinked ? 'View linked' : 'View free'}</span>
                         </button>
                         {compareSeriesId ? (
                           <button
@@ -946,7 +1032,7 @@ export default function App() {
                         sliceIndex={sliceIndex}
                         onSliceChange={setPrimarySliceIndex}
                         volumeSettings={volumeSettings}
-                        onVolumeSettingsChange={(patch) => setVolumeSettings((current) => ({ ...current, ...patch }))}
+                        onVolumeSettingsChange={handlePrimaryVolumeSettings}
                         cropBounds={cropBounds}
                         onCropChange={setCropBounds}
                         cropEditing={false}
@@ -954,6 +1040,8 @@ export default function App() {
                         viewerLayout={viewerLayout}
                         paneLabel="A"
                         hideCropControls
+                        viewTransform={sliceViewA}
+                        onViewTransformChange={handleSliceViewA}
                       />
                       {compareVolume ? (
                         <SliceViewer
@@ -961,15 +1049,10 @@ export default function App() {
                           volume={compareVolume}
                           sliceIndex={compareSliceIndex}
                           onSliceChange={setSecondarySliceIndex}
-                          volumeSettings={{ ...volumeSettings, ...compareSettings }}
-                          onVolumeSettingsChange={(patch) => {
-                            if (patch.window !== undefined || patch.level !== undefined) {
-                              setCompareSettings((current) => ({
-                                window: patch.window ?? current.window,
-                                level: patch.level ?? current.level,
-                              }))
-                            }
-                          }}
+                          volumeSettings={viewLinked
+                            ? volumeSettings
+                            : { ...volumeSettings, ...compareSettings }}
+                          onVolumeSettingsChange={handleCompareVolumeSettings}
                           cropBounds={FULL_CROP}
                           onCropChange={() => undefined}
                           cropEditing={false}
@@ -977,6 +1060,9 @@ export default function App() {
                           viewerLayout={viewerLayout}
                           paneLabel="B"
                           hideCropControls
+                          viewTransform={sliceViewB}
+                          onViewTransformChange={handleSliceViewB}
+                          resetControlledViewOnVolumeChange={!viewLinked}
                         />
                       ) : (
                         <div className="compare-empty-pane" role="status">
@@ -1132,7 +1218,15 @@ export default function App() {
 
           <ControlPanel
             volumeSettings={volumeSettings}
-            setVolumeSettings={setVolumeSettings}
+            setVolumeSettings={(settings) => {
+              setVolumeSettings(settings)
+              if (viewLinked) {
+                setCompareSettings({
+                  window: settings.window,
+                  level: settings.level,
+                })
+              }
+            }}
             projection={cameraProjection}
             onProjectionChange={setCameraProjection}
             reconstructionEnabled={reconstructionEnabled}

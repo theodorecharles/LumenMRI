@@ -58,6 +58,18 @@ interface SliceViewerProps {
   paneLabel?: string
   /** Hide 3D crop controls (compare layout). */
   hideCropControls?: boolean
+  /**
+   * Controlled pan/zoom. When set with `onViewTransformChange`, parent owns the
+   * transform (Compare view-link). Omit for local fit/pan/zoom state.
+   */
+  viewTransform?: ViewTransform
+  onViewTransformChange?: (view: ViewTransform) => void
+  /**
+   * Controlled viewers normally notify their owner to reset when the series
+   * changes. Compare pane B disables this while linked so mounting a new B
+   * preserves A and accepts the transform seeded by the parent.
+   */
+  resetControlledViewOnVolumeChange?: boolean
 }
 
 interface CanvasRect {
@@ -67,13 +79,13 @@ interface CanvasRect {
   height: number
 }
 
-interface ViewTransform {
+export interface ViewTransform {
   scale: number
   x: number
   y: number
 }
 
-const FIT_VIEW: ViewTransform = { scale: 1, x: 0, y: 0 }
+export const FIT_VIEW: ViewTransform = { scale: 1, x: 0, y: 0 }
 
 type CropInteraction =
   | { type: 'draw'; startX: number; startY: number }
@@ -245,6 +257,9 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     pickFlash = null,
     paneLabel,
     hideCropControls = false,
+    viewTransform,
+    onViewTransformChange,
+    resetControlledViewOnVolumeChange = true,
   }, forwardedRef) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const viewportRef = useRef<HTMLDivElement>(null)
@@ -256,7 +271,17 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const sliceIndexRef = useRef(sliceIndex)
     const viewRef = useRef<ViewTransform>(FIT_VIEW)
     const [canvasRect, setCanvasRect] = useState<CanvasRect | null>(null)
-    const [view, setView] = useState<ViewTransform>(FIT_VIEW)
+    const [localView, setLocalView] = useState<ViewTransform>(FIT_VIEW)
+    const viewControlled = viewTransform !== undefined
+    const view = viewControlled ? viewTransform : localView
+    const onViewTransformChangeRef = useRef(onViewTransformChange)
+    onViewTransformChangeRef.current = onViewTransformChange
+    const setView = (next: ViewTransform | ((current: ViewTransform) => ViewTransform)) => {
+      const resolved = typeof next === 'function' ? next(viewRef.current) : next
+      viewRef.current = resolved
+      onViewTransformChangeRef.current?.(resolved)
+      if (!viewControlled) setLocalView(resolved)
+    }
     const [panning, setPanning] = useState(false)
     const [measurementTool, setMeasurementTool] = useState<MeasurementTool | null>(null)
     const [probeTool, setProbeTool] = useState(false)
@@ -420,7 +445,10 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       angleBuildRef.current = null
       interactionRef.current = null
       setCinePlaying(false)
-      setView(FIT_VIEW)
+      if (!viewControlled || resetControlledViewOnVolumeChange) {
+        onViewTransformChangeRef.current?.(FIT_VIEW)
+        setLocalView(FIT_VIEW)
+      }
       setPanning(false)
     }, [volume.seriesId])
 
@@ -867,6 +895,9 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         className={paneLabel ? `slice-viewer pane-${paneLabel.toLowerCase()}` : 'slice-viewer'}
         aria-label={paneLabel ? `2D DICOM slice viewer pane ${paneLabel}` : '2D DICOM slice viewer'}
         data-pane={paneLabel || undefined}
+        data-view-transform={`${view.scale},${view.x},${view.y}`}
+        data-window={volumeSettings.window}
+        data-level={volumeSettings.level}
         onWheel={handleWheel}
       >
         <div className="slice-viewport" ref={viewportRef}>

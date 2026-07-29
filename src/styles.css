@@ -1843,6 +1843,7 @@ button:disabled {
   padding: 0 9px;
   color: #758b94;
   font-size: 8.5px;
+  white-space: nowrap;
   cursor: pointer;
   border: 1px solid transparent;
   border-radius: 6px;
