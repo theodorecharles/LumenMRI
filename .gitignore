@@ -1,6 +1,7 @@
 node_modules/
 dist/
 artifacts/
+.playwright-browsers/
 playwright-report/
 test-results/
 *.log

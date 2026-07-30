@@ -81,24 +81,29 @@ async function settledHandleCenter(page: Page, handle: Locator) {
   throw new Error('3D crop handle position never settled')
 }
 
+/**
+ * Best-effort diagnostic artifact only — never product acceptance.
+ * Under GHA SwiftShader, WebGL canvas buffer readback can hang past Playwright's
+ * screenshot timeout after fonts load (runs 30499086526, 30500159337 / 30500178166).
+ * Short timeout + swallow errors so capture cannot fail or stall the suite.
+ */
+async function captureDiagnostic(page: Page, path: string) {
+  try {
+    await page.screenshot({ path, animations: 'disabled', timeout: 5_000 })
+  } catch {
+    // Diagnostic only — product assertions continue.
+  }
+}
+
 test('opens the complete scan library and links 2D and 3D views', async ({ page }) => {
   // Batch #431 extended crop-handle settling + lighting assertions on this single flow.
-  // CI (SwiftShader + full FLAIR recon) routinely needs more than the default 180s budget;
-  // run 30498456421 exhausted the test budget mid screenshot; 30499086526 then hit the
-  // 30s fullPage cap on the live 3D crop editor after fonts loaded.
+  // CI (SwiftShader + full FLAIR recon) routinely needs more than the default 180s budget.
   test.setTimeout(480_000)
 
   const pageErrors: string[] = []
   page.on('pageerror', (error) => pageErrors.push(error.message))
 
-  /**
-   * Artifact capture for the WebGL viewer.
-   * fullPage + SwiftShader buffer readback on the live 3D crop editor exceeded the
-   * 30s cap in run 30499086526 (fonts loaded, then hung). Viewport-only avoids the
-   * multi-tile stitch; animations:disabled skips CSS; 90s covers a slow GPU readback.
-   */
-  const capture = (path: string) =>
-    page.screenshot({ path, animations: 'disabled', timeout: 90_000 })
+  const capture = (path: string) => captureDiagnostic(page, path)
 
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Scan library' })).toBeVisible()
@@ -458,7 +463,7 @@ test('switches one 2D stack across orthogonal MPR planes', async ({ page }) => {
   }
   await expect(page.getByTestId('pixel-probe-pin')).toHaveCount(1)
   await expect(page.locator('.pixel-probe-pin-label')).toBeVisible()
-  await page.screenshot({ path: 'artifacts/coronal-mpr-2d.png', fullPage: true })
+  await captureDiagnostic(page, 'artifacts/coronal-mpr-2d.png')
   await page.getByRole('button', { name: 'Pixel intensity probe' }).click()
   await page.getByRole('button', { name: 'Clear measurements on slice' }).click()
 
@@ -508,7 +513,7 @@ test('opens the included shoulder study and returns through the Lumen brand', as
   await expect(page.getByTestId('slice-canvas')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Coronal plane (acquired)' }))
     .toHaveAttribute('aria-pressed', 'true')
-  await page.screenshot({ path: 'artifacts/shoulder-split-view.png', fullPage: true })
+  await captureDiagnostic(page, 'artifacts/shoulder-split-view.png')
 
   await page.getByRole('link', { name: 'Lumen scan library' }).click()
   await expect(page.getByRole('heading', { name: 'Scan library' })).toBeVisible()
@@ -525,16 +530,16 @@ test('preserves sagittal physical proportions without clipping', async ({ page }
   await expect(page.locator('.viewer-canvas canvas')).toBeVisible({ timeout: 30_000 })
   await expect(page.locator('.volume-hud.top-left')).toContainText('SAG T1')
   await page.waitForTimeout(1_500)
-  await page.screenshot({ path: 'artifacts/sagittal-physical-scale.png', fullPage: true })
+  await captureDiagnostic(page, 'artifacts/sagittal-physical-scale.png')
   await page.getByRole('tab', { name: /Split/ }).click()
   await page.getByRole('button', { name: 'Slices' }).click()
   await page.waitForTimeout(800)
-  await page.screenshot({ path: 'artifacts/sagittal-2d-3d-orientation.png', fullPage: true })
+  await captureDiagnostic(page, 'artifacts/sagittal-2d-3d-orientation.png')
   await page.getByRole('button', { name: 'X axis' }).click()
   await page.getByRole('button', { name: 'Y axis' }).click()
   await page.getByRole('button', { name: 'Side view' }).click()
   await page.waitForTimeout(1_000)
-  await page.screenshot({ path: 'artifacts/sagittal-rotated-split-fit.png', fullPage: true })
+  await captureDiagnostic(page, 'artifacts/sagittal-rotated-split-fit.png')
   expect(pageErrors).toEqual([])
 })
 
@@ -570,7 +575,7 @@ test('keeps the library and 2D viewer usable on a mobile viewport', async ({ pag
   const fullscreenBox = await page.locator('.stage-shell').boundingBox()
   expect(fullscreenBox?.width).toBeCloseTo(390, 0)
   expect(fullscreenBox?.height).toBeCloseTo(844, 0)
-  await page.screenshot({ path: 'artifacts/mobile-volume-fullscreen.png', fullPage: true })
+  await captureDiagnostic(page, 'artifacts/mobile-volume-fullscreen.png')
   await page.getByRole('button', { name: 'Exit fullscreen' }).click()
   await expect(page.locator('.stage-shell')).not.toHaveClass(/is-fullscreen/)
   await page.getByRole('button', { name: 'Stop editing 3D crop box' }).click()
@@ -579,7 +584,7 @@ test('keeps the library and 2D viewer usable on a mobile viewport', async ({ pag
   await expect(page.getByRole('button', { name: 'Distance measurement' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'ROI area measurement' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Angle measurement' })).toBeVisible()
-  await page.screenshot({ path: 'artifacts/mobile-slice-view.png', fullPage: true })
+  await captureDiagnostic(page, 'artifacts/mobile-slice-view.png')
 })
 
 test('keeps viewer shortcuts alive while a toolbar button holds focus', async ({ page }) => {
