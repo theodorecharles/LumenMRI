@@ -2643,25 +2643,41 @@ button:disabled {
   display: grid;
   width: 100%;
   min-height: 29px;
-  grid-template-columns: 56px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 7px;
-  padding: 4px 7px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 0;
   color: #8398a0;
   font-family: 'DM Mono', monospace;
   font-size: 8px;
-  text-align: left;
-  cursor: pointer;
   border: 1px solid transparent;
   border-radius: 4px;
   background: transparent;
 }
 
+.annotation-inventory-jump {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 4px 4px 7px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border: 0;
+  border-radius: 3px 0 0 3px;
+  background: transparent;
+}
+
 .annotation-inventory-row:hover,
-.annotation-inventory-row:focus-visible {
+.annotation-inventory-row:focus-within {
   color: #d8faff;
   border-color: rgba(60, 211, 237, 0.22);
   background: rgba(60, 211, 237, 0.08);
+}
+
+.annotation-inventory-jump:focus-visible {
   outline: none;
 }
 
@@ -2673,6 +2689,24 @@ button:disabled {
   color: #ecfdff;
   border-color: rgba(107, 232, 247, 0.46);
   background: rgba(60, 211, 237, 0.14);
+}
+
+.annotation-inventory-delete {
+  display: grid;
+  width: 24px;
+  place-items: center;
+  color: #607880;
+  cursor: pointer;
+  border: 0;
+  border-radius: 0 3px 3px 0;
+  background: transparent;
+}
+
+.annotation-inventory-delete:hover,
+.annotation-inventory-delete:focus-visible {
+  color: #ffc4bb;
+  background: rgba(255, 120, 100, 0.12);
+  outline: none;
 }
 
 .annotation-inventory-tool {

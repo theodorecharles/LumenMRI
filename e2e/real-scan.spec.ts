@@ -326,10 +326,22 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
     `SL ${String(probeSlice + 1).padStart(3, '0')}`,
   )
 
+  // Per-row delete removes only that mark; other inventory rows stay.
+  const angleDelete = page.getByRole('button', {
+    name: `Delete Angle on slice ${measuredSlice + 1}`,
+  })
+  await angleDelete.click()
+  await expect(annotationRows).toHaveCount(3)
+  await expect(annotationRows.filter({ hasText: 'Angle' })).toHaveCount(0)
+  await expect(annotationRows.filter({ hasText: 'Distance' })).toHaveCount(1)
+  await expect(annotationRows.filter({ hasText: 'ROI' })).toHaveCount(1)
+  await expect(annotationRows.filter({ hasText: 'Probe' })).toHaveCount(1)
+  await expect(page.locator('.measurement-label.angle')).toHaveCount(0)
+
   // Per-slice clear removes the probe but preserves measurements elsewhere in the series.
   await page.getByRole('button', { name: 'Clear measurements on slice' }).click()
   await expect(page.getByTestId('pixel-probe-pin')).toHaveCount(0)
-  await expect(annotationRows).toHaveCount(3)
+  await expect(annotationRows).toHaveCount(2)
 
   // Inventory rows jump back to their slice and flash the selected mark.
   await annotationRows.filter({ hasText: 'ROI' }).click()
