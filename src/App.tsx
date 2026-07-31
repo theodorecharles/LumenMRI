@@ -21,9 +21,8 @@ import {
   ScanLine,
   SquareSplitHorizontal,
 } from 'lucide-react'
-import { useDicomLoader } from './hooks/useDicomLoader'
+import { useViewerSession } from './hooks/useViewerSession'
 import { useVolumeReconstruction } from './hooks/useVolumeReconstruction'
-import { chooseDirectory, filesFromDrop } from './lib/fileAccess'
 import { isTextEntryTarget, targetActivatesOnKey } from './lib/keyboardShortcuts'
 import {
   anatomicalPlaneFromOrientation,
@@ -32,24 +31,14 @@ import {
 } from './lib/mpr'
 import { isReconstructionReady } from './lib/reconstructVolume'
 import { compositeCompareSlicePng, exportCapturePng, type CaptureExportResult } from './lib/sliceCapture'
-import { FIT_VIEW, type ViewTransform } from './lib/sliceView'
 import {
-  createDemoVolume,
   mapRelativeSliceIndex,
   midSliceIndex,
   sliceIndexFromStackFraction,
 } from './lib/volume'
-import {
-  bundledSeriesSummary,
-  loadBundledCatalog,
-  loadBundledVolume,
-  type BundledCatalog,
-  type BundledSeries,
-} from './lib/bundledVolume'
 import type {
   AnatomicalPlane,
   CropBounds,
-  SeriesSummary,
   Vec3Tuple,
   VolumeData,
   VolumeSettings,
@@ -89,56 +78,67 @@ const FULL_CROP: CropBounds = {
   maxZ: 1,
 }
 
-type Screen = 'library' | 'viewer'
 type ViewerLayout = 'volume' | 'slice' | 'split' | 'compare'
 
-const COMPARE_WL_DEFAULT: Pick<VolumeSettings, 'window' | 'level'> = {
-  window: DEFAULT_VOLUME_SETTINGS.window,
-  level: DEFAULT_VOLUME_SETTINGS.level,
-}
-
 export default function App() {
-  const inputRef = useRef<HTMLInputElement>(null)
+  const session = useViewerSession()
+  const {
+    inputRef,
+    primarySliceIndexRef,
+    primarySettingsRef,
+    screen,
+    catalog,
+    catalogLoading,
+    catalogError,
+    openingId,
+    activeSeriesId,
+    compareSeriesId,
+    compareVolume,
+    compareOpeningId,
+    compareSettings,
+    setCompareSettings,
+    compareSliceIndex,
+    setCompareSliceIndex,
+    slicesLinked,
+    setSlicesLinked,
+    viewLinked,
+    setViewLinked,
+    sliceViewA,
+    sliceViewB,
+    handleSliceViewA,
+    handleSliceViewB,
+    enableViewLink,
+    volume,
+    progress,
+    error,
+    busy,
+    bundledSeries,
+    displaySeries,
+    clearCompare,
+    openBundledSeries,
+    setCompareSeries,
+    goHome,
+    handleFiles,
+    openFolder,
+    selectSeries,
+    showDemo,
+    onDropFiles,
+  } = session
+
   const viewerRef = useRef<ViewerStageHandle>(null)
   const sliceViewerRef = useRef<SliceViewerHandle>(null)
   const compareSliceViewerRef = useRef<SliceViewerHandle>(null)
   const stageRef = useRef<HTMLElement>(null)
-  const volumeCache = useRef(new Map<string, VolumeData>())
-  /** Bumps on each bundled open so a later click can supersede an in-flight load. */
-  const openGenerationRef = useRef(0)
   /** Through-plane depth of the last applied volume; null means no prior slice context. */
   const previousDepthRef = useRef<number | null>(null)
   const sliceIndexRef = useRef(0)
   const compareSliceIndexRef = useRef(0)
-  /** Sync guard so cancel + re-open in the same tick is not blocked by stale openingId state. */
-  const openingIdRef = useRef<string | null>(null)
-  const compareOpeningIdRef = useRef<string | null>(null)
-  const { series, volume, setVolume, progress, error, setError, scanFiles, loadSeries, cancelInFlight } =
-    useDicomLoader()
   const reconstruction = useVolumeReconstruction(volume)
-  const [screen, setScreen] = useState<Screen>('library')
-  const [catalog, setCatalog] = useState<BundledCatalog | null>(null)
-  const [catalogLoading, setCatalogLoading] = useState(true)
-  const [catalogError, setCatalogError] = useState<string | null>(null)
-  const [openingId, setOpeningId] = useState<string | null>(null)
-  const [activeSeriesId, setActiveSeriesId] = useState<string | null>(null)
-  const [compareSeriesId, setCompareSeriesId] = useState<string | null>(null)
-  const [compareVolume, setCompareVolume] = useState<VolumeData | null>(null)
-  const [compareOpeningId, setCompareOpeningId] = useState<string | null>(null)
-  const [compareSettings, setCompareSettings] = useState(COMPARE_WL_DEFAULT)
-  const [compareSliceIndex, setCompareSliceIndex] = useState(0)
-  const [slicesLinked, setSlicesLinked] = useState(true)
-  /** Mirror pan/zoom + window/level across Compare panes (independent of depth link). */
-  const [viewLinked, setViewLinked] = useState(true)
-  const [sliceViewA, setSliceViewA] = useState<ViewTransform>(FIT_VIEW)
-  const [sliceViewB, setSliceViewB] = useState<ViewTransform>(FIT_VIEW)
   const [volumeSettings, setVolumeSettings] = useState(DEFAULT_VOLUME_SETTINGS)
-  const viewLinkedRef = useRef(viewLinked)
-  const sliceViewARef = useRef(sliceViewA)
-  const volumeSettingsRef = useRef(volumeSettings)
-  viewLinkedRef.current = viewLinked
-  sliceViewARef.current = sliceViewA
-  volumeSettingsRef.current = volumeSettings
+  primarySettingsRef.current = {
+    window: volumeSettings.window,
+    level: volumeSettings.level,
+  }
   const [autoRotate, setAutoRotate] = useState(false)
   const [reconstructionEnabled, setReconstructionEnabled] = useState(true)
   /** True only when Acquired was forced by a recon error — not a user mode pick. */
@@ -149,6 +149,7 @@ export default function App() {
   const [slicePlane, setSlicePlane] = useState<AnatomicalPlane>('axial')
   sliceIndexRef.current = sliceIndex
   compareSliceIndexRef.current = compareSliceIndex
+  primarySliceIndexRef.current = sliceIndex
   const [showSliceHighlight, setShowSliceHighlight] = useState(false)
   const [cropBounds, setCropBounds] = useState<CropBounds>(FULL_CROP)
   const [cropEditing, setCropEditing] = useState(false)
@@ -199,49 +200,15 @@ export default function App() {
   const primarySliceVolume =
     viewerLayout === 'slice' || viewerLayout === 'split' ? mprVolume : volume
 
-  const workerBusy = progress.phase === 'scanning' || progress.phase === 'loading'
-  const busy = workerBusy || openingId !== null || compareOpeningId !== null
   const volumeCropped = cropBounds.minX > 0.001 || cropBounds.maxX < 0.999 ||
     cropBounds.minY > 0.001 || cropBounds.maxY < 0.999 ||
     cropBounds.minZ > 0.001 || cropBounds.maxZ < 0.999
-  const bundledSeries = useMemo(
-    () => catalog?.datasets.flatMap((dataset) => dataset.series) || [],
-    [catalog],
-  )
-  const displaySeries = useMemo(
-    () => [...bundledSeries.map(bundledSeriesSummary), ...series],
-    [bundledSeries, series],
-  )
 
   const handleReconstructionEnabledChange = useCallback((enabled: boolean) => {
     // Explicit user choice — do not auto-restore Enhanced on a later ready.
     reconstructionDisabledByErrorRef.current = false
     setReconstructionEnabled(enabled)
   }, [])
-
-  const rememberVolume = useCallback((next: VolumeData) => {
-    volumeCache.current.set(next.seriesId, next)
-  }, [])
-
-  const clearCompare = useCallback(() => {
-    compareOpeningIdRef.current = null
-    setCompareOpeningId(null)
-    setCompareSeriesId(null)
-    setCompareVolume(null)
-    setCompareSliceIndex(0)
-    setCompareSettings(COMPARE_WL_DEFAULT)
-    setSliceViewB(FIT_VIEW)
-  }, [])
-
-  const handleSliceViewA = useCallback((next: ViewTransform) => {
-    setSliceViewA(next)
-    if (viewLinked) setSliceViewB(next)
-  }, [viewLinked])
-
-  const handleSliceViewB = useCallback((next: ViewTransform) => {
-    setSliceViewB(next)
-    if (viewLinked) setSliceViewA(next)
-  }, [viewLinked])
 
   const handlePrimaryVolumeSettings = useCallback((patch: Partial<VolumeSettings>) => {
     setVolumeSettings((current) => ({ ...current, ...patch }))
@@ -254,7 +221,7 @@ export default function App() {
         level: patch.level ?? current.level,
       }))
     }
-  }, [viewLinked])
+  }, [setCompareSettings, viewLinked])
 
   const handleCompareVolumeSettings = useCallback((patch: Partial<VolumeSettings>) => {
     if (patch.window === undefined && patch.level === undefined) return
@@ -274,41 +241,7 @@ export default function App() {
       window: patch.window ?? current.window,
       level: patch.level ?? current.level,
     }))
-  }, [viewLinked])
-
-  const enableViewLink = useCallback(() => {
-    setViewLinked(true)
-    setSliceViewB(sliceViewA)
-    setCompareSettings({
-      window: volumeSettings.window,
-      level: volumeSettings.level,
-    })
-  }, [sliceViewA, volumeSettings.level, volumeSettings.window])
-
-  useEffect(() => {
-    let cancelled = false
-    loadBundledCatalog()
-      .then((nextCatalog) => {
-        if (cancelled) return
-        setCatalog(nextCatalog)
-        setCatalogLoading(false)
-      })
-      .catch((loadError: unknown) => {
-        if (cancelled) return
-        setCatalogError(
-          loadError instanceof Error ? loadError.message : 'The included scan library failed to load.',
-        )
-        setCatalogLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
-    inputRef.current?.setAttribute('webkitdirectory', '')
-    inputRef.current?.setAttribute('directory', '')
-  }, [])
+  }, [setCompareSettings, viewLinked])
 
   // Terminal reconstruction failure: force Acquired. Re-enable Enhanced only when that
   // disable was error-driven (#2645) — not when the user chose Acquired during processing.
@@ -324,279 +257,11 @@ export default function App() {
       setReconstructionEnabled(true)
     }
   }, [reconstruction.status])
+
+  // Compare pane B applied — enter compare layout (session owns the series, App owns layout chrome).
   useEffect(() => {
-    if (!series.length || activeSeriesId) return
-    const recommended = series.find((item) => item.supported)
-    if (!recommended) return
-    setActiveSeriesId(recommended.id)
-    loadSeries(recommended.id)
-  }, [activeSeriesId, loadSeries, series])
-
-  // Failed loads leave the previous volume in place. Revert the series highlight
-  // to the last successful volume so the panel matches the stage. Skip when
-  // volume is null (first-load failure) — clearing activeSeriesId would re-fire
-  // the auto-recommend effect and infinite-retry a failing series.
-  useEffect(() => {
-    if (progress.phase !== 'error' || !volume) return
-    setActiveSeriesId(volume.seriesId)
-  }, [progress.phase, volume])
-
-  const pushViewerLocation = useCallback((id: string) => {
-    window.history.pushState({ screen: 'viewer', seriesId: id }, '', `#series/${id}`)
-  }, [])
-
-  const cancelPendingOpen = useCallback(() => {
-    openGenerationRef.current += 1
-    openingIdRef.current = null
-    setOpeningId(null)
-  }, [])
-
-  const openBundledSeries = useCallback(
-    async (selection: BundledSeries, pushHistory = true) => {
-      // Latest click wins: bump generation so an in-flight open cannot apply after a newer one.
-      const generation = ++openGenerationRef.current
-      openingIdRef.current = selection.id
-      // Cancel any in-flight local load-series before async fetch so volume-ready
-      // / load-progress cannot overwrite the bundled volume or flip progress.
-      cancelInFlight()
-      // cancelInFlight drops worker results without error — abandon in-flight compare open
-      // so compareOpeningId cannot leave busy stuck. Keep an already-applied pane B.
-      if (compareOpeningIdRef.current) {
-        compareOpeningIdRef.current = null
-        setCompareOpeningId(null)
-      }
-      setCatalogError(null)
-      setError(null)
-      setOpeningId(selection.id)
-      try {
-        let selectedVolume = volumeCache.current.get(selection.id)
-        if (!selectedVolume) {
-          selectedVolume = await loadBundledVolume(selection)
-          // Cache even if superseded/cancelled so a later open of the same series is free.
-          volumeCache.current.set(selection.id, selectedVolume)
-        }
-        // Stale generation (superseded click or user left open intent) — do not force viewer.
-        if (generation !== openGenerationRef.current) return
-        setVolume(selectedVolume)
-        rememberVolume(selectedVolume)
-        setActiveSeriesId(selection.id)
-        // Primary replaced the compare series — drop B so A/B never share the same stack.
-        if (compareSeriesId === selection.id) clearCompare()
-        setScreen('viewer')
-        if (pushHistory) pushViewerLocation(selection.id)
-      } catch (loadError: unknown) {
-        if (generation !== openGenerationRef.current) return
-        const message =
-          loadError instanceof Error ? loadError.message : 'The selected volume could not be opened.'
-        // goHome leaves the last volume in state. Library opens must always surface via
-        // catalogError (ScanLibrary only reads that prop). Keep setError only when already
-        // on the viewer with a residual volume so the stage/footer can show the failure.
-        if (volume && screen !== 'library') {
-          setError(message)
-        } else {
-          setCatalogError(message)
-          setScreen('library')
-        }
-      } finally {
-        if (generation === openGenerationRef.current) {
-          openingIdRef.current = null
-          setOpeningId(null)
-        }
-      }
-    },
-    [cancelInFlight, clearCompare, compareSeriesId, pushViewerLocation, rememberVolume, screen, setError, setVolume, volume],
-  )
-
-  const setCompareSeries = useCallback(
-    async (selection: SeriesSummary) => {
-      if (!selection.supported || selection.id === activeSeriesId) return
-
-      const applyCompareVolume = (next: VolumeData) => {
-        const primarySettings = volumeSettingsRef.current
-        rememberVolume(next)
-        setCompareVolume(next)
-        setCompareSeriesId(next.seriesId)
-        setCompareSettings({
-          window: primarySettings.window,
-          level: primarySettings.level,
-        })
-        setSliceViewB(viewLinkedRef.current ? sliceViewARef.current : FIT_VIEW)
-        const primaryDepth = volume?.dimensions[2] ?? next.dimensions[2]
-        const primaryIndex = volume ? sliceIndexRef.current : midSliceIndex(next.dimensions[2])
-        setCompareSliceIndex(
-          slicesLinked
-            ? mapRelativeSliceIndex(primaryIndex, primaryDepth, next.dimensions[2])
-            : midSliceIndex(next.dimensions[2]),
-        )
-        if (viewerLayout !== 'compare') setViewerLayout('compare')
-      }
-
-      const cached = volumeCache.current.get(selection.id)
-      if (cached) {
-        applyCompareVolume(cached)
-        return
-      }
-
-      const included = bundledSeries.find((entry) => entry.id === selection.id)
-      if (included) {
-        const generation = selection.id
-        compareOpeningIdRef.current = generation
-        setCompareOpeningId(generation)
-        setError(null)
-        try {
-          const loaded = await loadBundledVolume(included)
-          if (compareOpeningIdRef.current !== generation) return
-          applyCompareVolume(loaded)
-        } catch (loadError: unknown) {
-          if (compareOpeningIdRef.current !== generation) return
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : 'The compare series could not be opened.',
-          )
-        } finally {
-          if (compareOpeningIdRef.current === generation) {
-            compareOpeningIdRef.current = null
-            setCompareOpeningId(null)
-          }
-        }
-        return
-      }
-
-      // Local DICOM: load via worker without replacing the primary volume.
-      compareOpeningIdRef.current = selection.id
-      setCompareOpeningId(selection.id)
-      loadSeries(selection.id, {
-        onVolume: (next) => {
-          if (compareOpeningIdRef.current !== selection.id) return
-          applyCompareVolume(next)
-          compareOpeningIdRef.current = null
-          setCompareOpeningId(null)
-        },
-      })
-    },
-    [
-      activeSeriesId,
-      bundledSeries,
-      loadSeries,
-      rememberVolume,
-      setError,
-      slicesLinked,
-      viewerLayout,
-      volume,
-    ],
-  )
-
-  useEffect(() => {
-    const navigateFromHistory = () => {
-      if (window.location.hash === '#local') {
-        cancelPendingOpen()
-        setScreen('viewer')
-        return
-      }
-      const match = window.location.hash.match(/^#series\/(.+)$/)
-      if (!match) {
-        // Browser Back to library while a bundled open is in flight.
-        cancelPendingOpen()
-        clearCompare()
-        setScreen('library')
-        return
-      }
-      const id = decodeURIComponent(match[1])
-      const included = bundledSeries.find((entry) => entry.id === id)
-      if (included) {
-        // Already loading this series — leave the in-flight open alone.
-        if (openingIdRef.current === included.id) return
-        // Different series (or idle): drop any pending open so history can win.
-        cancelPendingOpen()
-        void openBundledSeries(included, false)
-      } else {
-        const local = series.find((entry) => entry.id === id)
-        if (local) {
-          cancelPendingOpen()
-          // Cancel in-flight worker load (compare or prior primary). load-series alone does
-          // not bump jobGeneration; without cancel the compare job can still post volume-ready
-          // after pendingOnVolume is cleared and install B as primary.
-          cancelInFlight()
-          // Drop compare-open flag so busy does not stick after abandon.
-          if (compareOpeningIdRef.current) {
-            compareOpeningIdRef.current = null
-            setCompareOpeningId(null)
-          }
-          setActiveSeriesId(local.id)
-          setScreen('viewer')
-          loadSeries(local.id)
-        }
-      }
-    }
-    window.addEventListener('popstate', navigateFromHistory)
-    if (bundledSeries.length && window.location.hash) navigateFromHistory()
-    return () => window.removeEventListener('popstate', navigateFromHistory)
-  }, [bundledSeries, cancelInFlight, cancelPendingOpen, clearCompare, loadSeries, openBundledSeries, series])
-
-  const goHome = useCallback((pushHistory = true) => {
-    cancelPendingOpen()
-    // Abandon in-flight / applied compare so busy cannot stick after leaving the viewer.
-    clearCompare()
-    setScreen('library')
-    setAutoRotate(false)
-    if (pushHistory) {
-      window.history.pushState({ screen: 'library' }, '', `${window.location.pathname}${window.location.search}`)
-    }
-  }, [cancelPendingOpen, clearCompare])
-
-  const handleFiles = useCallback(
-    (files: File[]) => {
-      if (!files.length) return
-      // Drop any in-flight bundled open so a late fetch cannot overwrite this local intent.
-      cancelPendingOpen()
-      clearCompare()
-      setActiveSeriesId(null)
-      setScreen('viewer')
-      window.history.pushState({ screen: 'viewer', local: true }, '', '#local')
-      scanFiles(files)
-    },
-    [cancelPendingOpen, clearCompare, scanFiles],
-  )
-
-  const openFolder = useCallback(async () => {
-    try {
-      const files = await chooseDirectory()
-      if (files === null) inputRef.current?.click()
-      else handleFiles(files)
-    } catch (openError) {
-      console.error(openError)
-      inputRef.current?.click()
-    }
-  }, [handleFiles])
-
-  const selectSeries = (selection: SeriesSummary) => {
-    if (busy) return
-    // Same-id is a no-op unless first load failed (error + no volume). Error-revert
-    // intentionally leaves activeSeriesId in that case to avoid auto-recommend loops;
-    // re-select must still retry the load.
-    if (selection.id === activeSeriesId) {
-      if (progress.phase !== 'error' || volume) return
-    }
-    const included = bundledSeries.find((entry) => entry.id === selection.id)
-    if (included) {
-      void openBundledSeries(included)
-      return
-    }
-    setActiveSeriesId(selection.id)
-    if (compareSeriesId === selection.id) clearCompare()
-    setScreen('viewer')
-    pushViewerLocation(selection.id)
-    loadSeries(selection.id)
-  }
-
-  const showDemo = () => {
-    setActiveSeriesId('demo-phantom')
-    clearCompare()
-    const demo = createDemoVolume()
-    setVolume(demo)
-    rememberVolume(demo)
-  }
+    if (compareSeriesId) setViewerLayout('compare')
+  }, [compareSeriesId])
 
   const compareVolumeRef = useRef(compareVolume)
   compareVolumeRef.current = compareVolume
@@ -608,7 +273,6 @@ export default function App() {
       previousDepthRef.current = null
       return
     }
-    rememberVolume(volume)
     setSlicePlane(anatomicalPlaneFromOrientation(volume.orientation))
     const nextDepth = volume.dimensions[2]
     const previousDepth = previousDepthRef.current
@@ -629,15 +293,7 @@ export default function App() {
         mapRelativeSliceIndex(nextSlice, nextDepth, secondary.dimensions[2]),
       )
     }
-  }, [rememberVolume, volume])
-
-  // Local compare load failures clear the worker handler but not this UI busy flag.
-  useEffect(() => {
-    if (progress.phase === 'error' && compareOpeningId) {
-      compareOpeningIdRef.current = null
-      setCompareOpeningId(null)
-    }
-  }, [compareOpeningId, progress.phase])
+  }, [setCompareSliceIndex, volume])
 
   const setPrimarySliceIndex = useCallback(
     (index: number) => {
@@ -651,7 +307,7 @@ export default function App() {
         )
       }
     },
-    [compareVolume, primarySliceVolume, slicesLinked],
+    [compareVolume, primarySliceVolume, setCompareSliceIndex, slicesLinked],
   )
 
   const setSecondarySliceIndex = useCallback(
@@ -664,7 +320,7 @@ export default function App() {
         setSliceIndex(mapRelativeSliceIndex(next, depth, primarySliceVolume.dimensions[2]))
       }
     },
-    [compareVolume, primarySliceVolume, slicesLinked],
+    [compareVolume, primarySliceVolume, setCompareSliceIndex, slicesLinked],
   )
 
   useEffect(() => {
@@ -684,6 +340,7 @@ export default function App() {
   }, [
     acquiredPlane,
     compareVolume,
+    setCompareSliceIndex,
     slicePlaneIsAcquired,
     slicesLinked,
     viewerLayout,
@@ -753,6 +410,11 @@ export default function App() {
 
   useEffect(() => {
     if (screen !== 'viewer') setIsStageFullscreen(false)
+  }, [screen])
+
+  // Leaving the viewer via goHome — stop auto-orbit chrome.
+  useEffect(() => {
+    if (screen === 'library') setAutoRotate(false)
   }, [screen])
 
   const showCaptureToast = useCallback((message: string) => {
@@ -880,7 +542,7 @@ export default function App() {
   const onDrop = async (event: React.DragEvent) => {
     event.preventDefault()
     setIsDragging(false)
-    handleFiles(await filesFromDrop(event.dataTransfer))
+    await onDropFiles(event.dataTransfer)
   }
 
   return (
