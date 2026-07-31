@@ -14,6 +14,7 @@ import {
   SquareDashed,
   Trash2,
 } from 'lucide-react'
+import { isTextEntryTarget } from '../lib/keyboardShortcuts'
 import { rulerLengthMillimeters } from '../lib/mpr'
 import { formatProbeScalar, samplePixelAt, type PixelProbeSample } from '../lib/pixelProbe'
 import { computeRoiStats, formatRoiSummary } from '../lib/roiStats'
@@ -490,6 +491,27 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         setActivePickFlash((current) => (current?.token === token ? null : current))
       }, 900)
       return () => window.clearTimeout(timer)
+    }, [annotationFlash])
+
+    // AC-2: Delete / Backspace removes only the selected inventory mark (flash selection).
+    useEffect(() => {
+      if (!annotationFlash) return
+      const { kind, id, token } = annotationFlash
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key !== 'Delete' && event.key !== 'Backspace') return
+        if (event.metaKey || event.ctrlKey || event.altKey) return
+        if (isTextEntryTarget(event.target)) return
+        event.preventDefault()
+        if (kind === 'measurement') {
+          setMeasurements((current) => current.filter((measurement) => measurement.id !== id))
+        } else {
+          setPinnedProbes((current) => current.filter((probe) => probe.id !== id))
+        }
+        setAnnotationFlash(null)
+        setActivePickFlash((current) => (current?.token === token ? null : current))
+      }
+      window.addEventListener('keydown', onKeyDown)
+      return () => window.removeEventListener('keydown', onKeyDown)
     }, [annotationFlash])
 
     useEffect(() => {
@@ -1326,6 +1348,13 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                           aria-label={`${toolLabel}, ${item.summary}, slice ${item.slice + 1}`}
                           title={`Jump to slice ${item.slice + 1}`}
                           onClick={() => jumpToAnnotation(item)}
+                          onKeyDown={(event) => {
+                            if (event.key !== 'Delete' && event.key !== 'Backspace') return
+                            if (event.metaKey || event.ctrlKey || event.altKey) return
+                            event.preventDefault()
+                            event.stopPropagation()
+                            removeAnnotation(item)
+                          }}
                         >
                           <span className="annotation-inventory-tool">{toolLabel}</span>
                           <span className="annotation-inventory-summary">{item.summary}</span>

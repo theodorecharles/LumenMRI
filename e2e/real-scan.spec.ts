@@ -338,10 +338,24 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
   await expect(annotationRows.filter({ hasText: 'Probe' })).toHaveCount(1)
   await expect(page.locator('.measurement-label.angle')).toHaveCount(0)
 
+  // AC-2: with a row selected, Delete / Backspace remove only that annotation.
+  await annotationRows.filter({ hasText: 'Distance' }).click()
+  await expect(annotationRows.filter({ hasText: 'Distance' })).toHaveClass(/selected/)
+  await page.keyboard.press('Delete')
+  await expect(annotationRows).toHaveCount(2)
+  await expect(annotationRows.filter({ hasText: 'Distance' })).toHaveCount(0)
+  await expect(annotationRows.filter({ hasText: 'ROI' })).toHaveCount(1)
+  await expect(annotationRows.filter({ hasText: 'Probe' })).toHaveCount(1)
+  await expect(page.locator('.measurement-label.distance')).toHaveCount(0)
+
+  // Still on measured slice after Distance jump; move to the probe slice for bulk clear.
+  await sliceSlider.fill(String(probeSlice))
+  await expect(page.getByTestId('pixel-probe-pin')).toHaveCount(1)
   // Per-slice clear removes the probe but preserves measurements elsewhere in the series.
   await page.getByRole('button', { name: 'Clear measurements on slice' }).click()
   await expect(page.getByTestId('pixel-probe-pin')).toHaveCount(0)
-  await expect(annotationRows).toHaveCount(2)
+  await expect(annotationRows).toHaveCount(1)
+  await expect(annotationRows.filter({ hasText: 'ROI' })).toHaveCount(1)
 
   // Inventory rows jump back to their slice and flash the selected mark.
   await annotationRows.filter({ hasText: 'ROI' }).click()
@@ -349,13 +363,31 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
   await expect(page.getByTestId('slice-pick-crosshair')).toBeVisible()
   await expect(page.locator('.roi-measurement')).toHaveClass(/is-flashing/)
   await expect(annotationRows.filter({ hasText: 'ROI' })).toHaveClass(/selected/)
-  await capture('artifacts/linked-split-view.png')
+  // Backspace on the selected inventory row removes only that mark (same remove-one path).
+  await page.keyboard.press('Backspace')
+  await expect(annotationRows).toHaveCount(0)
+  await expect(page.locator('.measurement-label')).toHaveCount(0)
+
+  // Clear-all bulk path: re-pin one probe (tool may already be active), then clear the series.
+  const probeToolButton = page.getByRole('button', { name: 'Pixel intensity probe' })
+  if ((await probeToolButton.getAttribute('aria-pressed')) !== 'true') {
+    await probeToolButton.click()
+  }
+  await expect(probeToolButton).toHaveAttribute('aria-pressed', 'true')
+  if (cropBox) {
+    await page.mouse.click(
+      cropBox.x + cropBox.width * 0.55,
+      cropBox.y + cropBox.height * 0.45,
+    )
+  }
+  await expect(annotationRows).toHaveCount(1)
   await page.getByRole('button', { name: 'Clear all annotations on series' }).click()
   await expect(annotationInventory).toHaveCount(0)
   await expect(page.locator('.measurement-label')).toHaveCount(0)
+  await capture('artifacts/linked-split-view.png')
   // Deselect active probe tool so plain left-drag is free; shift-drag still owns W/L.
-  await page.getByRole('button', { name: 'Pixel intensity probe' }).click()
-  await expect(page.getByRole('button', { name: 'Pixel intensity probe' })).toHaveAttribute('aria-pressed', 'false')
+  await probeToolButton.click()
+  await expect(probeToolButton).toHaveAttribute('aria-pressed', 'false')
 
   const windowSlider = page.getByRole('slider', { name: 'Window' })
   const levelSlider = page.getByRole('slider', { name: 'Level' })
