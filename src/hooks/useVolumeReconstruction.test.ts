@@ -1,6 +1,6 @@
-import { cleanup, renderHook } from '@testing-library/react'
+import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { VolumeData } from '../types'
+import type { ReconstructedVolume, VolumeData } from '../types'
 import { useVolumeReconstruction } from './useVolumeReconstruction'
 
 function makeVolume(overrides: Partial<VolumeData> = {}): VolumeData {
@@ -19,6 +19,18 @@ function makeVolume(overrides: Partial<VolumeData> = {}): VolumeData {
   }
 }
 
+function makeReadyVolume(seriesId = 'series-a'): ReconstructedVolume {
+  return {
+    seriesId,
+    data: new Uint8Array([9, 9, 9, 9]),
+    dimensions: [2, 2, 2],
+    spacing: [1, 1, 0.5],
+    sourceDepth: 1,
+    factor: 2,
+    syntheticSlices: 1,
+  }
+}
+
 class FakeWorker {
   static instances: FakeWorker[] = []
   terminate = vi.fn()
@@ -29,6 +41,24 @@ class FakeWorker {
   constructor() {
     FakeWorker.instances.push(this)
   }
+
+  /** Deliver a worker message to the registered handler. */
+  emit(data: unknown) {
+    for (const [type, handler] of this.addEventListener.mock.calls) {
+      if (type === 'message') {
+        ;(handler as (event: MessageEvent) => void)({ data } as MessageEvent)
+      }
+    }
+  }
+}
+
+function completeWorker(worker: FakeWorker, seriesId = 'series-a') {
+  const posted = worker.postMessage.mock.calls[0]?.[0] as { requestId: number }
+  worker.emit({
+    type: 'complete',
+    requestId: posted.requestId,
+    volume: makeReadyVolume(seriesId),
+  })
 }
 
 describe('useVolumeReconstruction', () => {
@@ -92,5 +122,91 @@ describe('useVolumeReconstruction', () => {
     rerender({ enabled: false })
     expect(worker.terminate).toHaveBeenCalled()
     expect(FakeWorker.instances).toHaveLength(1)
+  })
+
+  it('does not start a new worker when VolumeData is a new object with the same data buffer', () => {
+    const data = new Uint8Array([1, 2, 3, 4])
+    const first = makeVolume({ data })
+    const { result, rerender } = renderHook(
+      ({ source }) =>
+        useVolumeReconstruction(source, { enabled: true, seriesId: source.seriesId }),
+      { initialProps: { source: first } },
+    )
+    expect(FakeWorker.instances).toHaveLength(1)
+
+    act(() => {
+      completeWorker(FakeWorker.instances[0])
+    })
+    expect(result.current.status).toBe('ready')
+
+    const second = makeVolume({ data }) // new wrapper, same buffer identity
+    expect(second).not.toBe(first)
+    rerender({ source: second })
+
+    expect(FakeWorker.instances).toHaveLength(1)
+    expect(result.current.status).toBe('ready')
+    expect(FakeWorker.instances[0].terminate).not.toHaveBeenCalled()
+  })
+
+  it('reuses a ready result for the same seriesId after disable then re-enable', () => {
+    const source = makeVolume()
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useVolumeReconstruction(source, { enabled, seriesId: source.seriesId }),
+      { initialProps: { enabled: true } },
+    )
+    act(() => {
+      completeWorker(FakeWorker.instances[0])
+    })
+    expect(result.current.status).toBe('ready')
+    expect(FakeWorker.instances).toHaveLength(1)
+
+    rerender({ enabled: false })
+    expect(result.current.status).toBe('idle')
+    expect(FakeWorker.instances[0].terminate).toHaveBeenCalled()
+
+    rerender({ enabled: true })
+    expect(FakeWorker.instances).toHaveLength(1)
+    expect(result.current.status).toBe('ready')
+    expect(result.current.volume?.seriesId).toBe('series-a')
+  })
+
+  it('starts a new worker when the data buffer identity changes', () => {
+    const firstData = new Uint8Array([1, 2, 3, 4])
+    const first = makeVolume({ data: firstData })
+    const { result, rerender } = renderHook(
+      ({ source }) =>
+        useVolumeReconstruction(source, { enabled: true, seriesId: source.seriesId }),
+      { initialProps: { source: first } },
+    )
+    act(() => {
+      completeWorker(FakeWorker.instances[0])
+    })
+    expect(result.current.status).toBe('ready')
+
+    const second = makeVolume({ data: new Uint8Array([1, 2, 3, 4]) })
+    rerender({ source: second })
+
+    expect(FakeWorker.instances).toHaveLength(2)
+    expect(FakeWorker.instances[0].terminate).toHaveBeenCalled()
+    expect(result.current.status).toBe('processing')
+  })
+
+  it('starts a new worker when dimensions change for the same seriesId', () => {
+    const data = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])
+    const first = makeVolume({ data, dimensions: [2, 2, 1], sliceCount: 1 })
+    const { result, rerender } = renderHook(
+      ({ source }) =>
+        useVolumeReconstruction(source, { enabled: true, seriesId: source.seriesId }),
+      { initialProps: { source: first } },
+    )
+    act(() => {
+      completeWorker(FakeWorker.instances[0])
+    })
+
+    const second = makeVolume({ data, dimensions: [2, 2, 2], sliceCount: 2 })
+    rerender({ source: second })
+
+    expect(FakeWorker.instances).toHaveLength(2)
+    expect(result.current.status).toBe('processing')
   })
 })

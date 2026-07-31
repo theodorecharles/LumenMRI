@@ -115,7 +115,11 @@ export default function App() {
   const compareOpeningIdRef = useRef<string | null>(null)
   const { series, volume, setVolume, progress, error, setError, scanFiles, loadSeries, cancelInFlight } =
     useDicomLoader()
-  const reconstruction = useVolumeReconstruction(volume)
+  const [reconstructionEnabled, setReconstructionEnabled] = useState(true)
+  const reconstruction = useVolumeReconstruction(volume, {
+    enabled: reconstructionEnabled,
+    seriesId: volume?.seriesId ?? null,
+  })
   const [screen, setScreen] = useState<Screen>('library')
   const [catalog, setCatalog] = useState<BundledCatalog | null>(null)
   const [catalogLoading, setCatalogLoading] = useState(true)
@@ -140,7 +144,6 @@ export default function App() {
   sliceViewARef.current = sliceViewA
   volumeSettingsRef.current = volumeSettings
   const [autoRotate, setAutoRotate] = useState(false)
-  const [reconstructionEnabled, setReconstructionEnabled] = useState(true)
   /** True only when Acquired was forced by a recon error — not a user mode pick. */
   const reconstructionDisabledByErrorRef = useRef(false)
   const [cameraProjection, setCameraProjection] = useState<'perspective' | 'isometric'>('perspective')

@@ -23,6 +23,45 @@ const IDLE_STATE: ReconstructionState = {
   message: 'Waiting for volume',
 }
 
+/** Ready result keyed by series identity + geometry + data buffer identity. */
+interface ReadyCache {
+  seriesId: string
+  dimX: number
+  dimY: number
+  dimZ: number
+  spX: number
+  spY: number
+  spZ: number
+  dataGeneration: Uint8Array
+  state: ReconstructionState
+}
+
+function cacheMatches(
+  cache: ReadyCache | null,
+  seriesId: string,
+  dimX: number,
+  dimY: number,
+  dimZ: number,
+  spX: number,
+  spY: number,
+  spZ: number,
+  dataGeneration: Uint8Array,
+): cache is ReadyCache {
+  return (
+    cache !== null &&
+    cache.seriesId === seriesId &&
+    cache.dimX === dimX &&
+    cache.dimY === dimY &&
+    cache.dimZ === dimZ &&
+    cache.spX === spX &&
+    cache.spY === spY &&
+    cache.spZ === spZ &&
+    cache.dataGeneration === dataGeneration &&
+    cache.state.status === 'ready' &&
+    cache.state.volume !== null
+  )
+}
+
 export function useVolumeReconstruction(
   source: VolumeData | null,
   options: UseVolumeReconstructionOptions = {},
@@ -30,12 +69,60 @@ export function useVolumeReconstruction(
   const enabled = options.enabled ?? true
   const seriesId = options.seriesId ?? source?.seriesId ?? null
   const requestRef = useRef(0)
+  const sourceRef = useRef(source)
+  sourceRef.current = source
+  const readyCacheRef = useRef<ReadyCache | null>(null)
   const [state, setState] = useState<ReconstructionState>(IDLE_STATE)
 
+  // Primitive / stable tokens — not the VolumeData object (AC-3).
+  const dimX = source?.dimensions[0] ?? null
+  const dimY = source?.dimensions[1] ?? null
+  const dimZ = source?.dimensions[2] ?? null
+  const spX = source?.spacing[0] ?? null
+  const spY = source?.spacing[1] ?? null
+  const spZ = source?.spacing[2] ?? null
+  /** Buffer identity; stable across new VolumeData wrappers for the same load. */
+  const dataGeneration = source?.data ?? null
+
   useEffect(() => {
-    // No source or reconstruction disabled: do not create a worker.
-    if (!source || !enabled) {
+    // Reconstruction disabled: do not create a worker. Cleanup of a prior effect
+    // terminates any in-flight worker (AC-1, AC-4).
+    if (!enabled) {
       setState(IDLE_STATE)
+      return
+    }
+
+    const current = sourceRef.current
+    if (
+      !current ||
+      seriesId == null ||
+      dimX == null ||
+      dimY == null ||
+      dimZ == null ||
+      spX == null ||
+      spY == null ||
+      spZ == null ||
+      dataGeneration == null
+    ) {
+      setState(IDLE_STATE)
+      return
+    }
+
+    // Reuse a ready result for the same series identity (AC-2).
+    if (
+      cacheMatches(
+        readyCacheRef.current,
+        seriesId,
+        dimX,
+        dimY,
+        dimZ,
+        spX,
+        spY,
+        spZ,
+        dataGeneration,
+      )
+    ) {
+      setState(readyCacheRef.current.state)
       return
     }
 
@@ -47,7 +134,7 @@ export function useVolumeReconstruction(
       compactViewport: window.matchMedia('(max-width: 690px)').matches,
       hardwareConcurrency: navigator.hardwareConcurrency,
     })
-    const copy = source.data.slice()
+    const copy = current.data.slice()
     setState({
       status: 'processing',
       progress: 0,
@@ -66,18 +153,30 @@ export function useVolumeReconstruction(
       if (message.requestId !== requestId) return
       if (message.type === 'progress') {
         const progress = message.progress || 0
-        setState((current) => ({
-          ...current,
+        setState((currentState) => ({
+          ...currentState,
           progress,
           message: `Synthesizing anatomical layers · ${Math.round(progress * 100)}%`,
         }))
       } else if (message.type === 'complete' && message.volume) {
-        setState({
+        const readyState: ReconstructionState = {
           status: 'ready',
           progress: 1,
           volume: message.volume,
           message: `${message.volume.dimensions[2]} reconstructed planes`,
-        })
+        }
+        readyCacheRef.current = {
+          seriesId,
+          dimX,
+          dimY,
+          dimZ,
+          spX,
+          spY,
+          spZ,
+          dataGeneration,
+          state: readyState,
+        }
+        setState(readyState)
       } else if (message.type === 'error') {
         setState({
           status: 'error',
@@ -90,15 +189,15 @@ export function useVolumeReconstruction(
 
     worker.postMessage({
       requestId,
-      seriesId: seriesId ?? source.seriesId,
+      seriesId,
       data: copy,
-      dimensions: source.dimensions,
-      spacing: source.spacing,
+      dimensions: current.dimensions,
+      spacing: current.spacing,
       options: deviceOptions,
     }, [copy.buffer])
 
     return () => worker.terminate()
-  }, [source, enabled, seriesId])
+  }, [enabled, seriesId, dimX, dimY, dimZ, spX, spY, spZ, dataGeneration])
 
   return state
 }
