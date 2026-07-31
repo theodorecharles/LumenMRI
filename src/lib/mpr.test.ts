@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { AnatomicalPlane, VolumeData } from '../types'
 import {
   anatomicalPlaneFromOrientation,
+  mapPlaneLocusToPlane,
+  planePointToSource,
   resliceVolume,
   rulerLengthMillimeters,
   sourceAxesForPlane,
@@ -200,6 +202,60 @@ describe('orthogonal MPR', () => {
       expect(picked).toBe(voxelAt(volume, 1, 2, 3))
     },
   )
+
+  it('inverts sourcePointToPlane back to acquired fractions', () => {
+    const source: [number, number, number] = [0.2, 0.4, 0.8]
+    for (const target of ['axial', 'coronal', 'sagittal'] as const) {
+      const plane = sourcePointToPlane(source, 'axial', target)
+      const recovered = planePointToSource(plane, 'axial', target)
+      expect(recovered[0]).toBeCloseTo(source[0], 10)
+      expect(recovered[1]).toBeCloseTo(source[1], 10)
+      expect(recovered[2]).toBeCloseTo(source[2], 10)
+    }
+  })
+
+  it.each([
+    ['axial', 'coronal'],
+    ['axial', 'sagittal'],
+    ['coronal', 'sagittal'],
+    ['coronal', 'axial'],
+    ['sagittal', 'axial'],
+    ['sagittal', 'coronal'],
+  ] as const)(
+    'maps %s locus to the matching %s stack fraction via sourcePointToPlane path',
+    (fromPlane, toPlane) => {
+      const volume = makeVolume('Axial')
+      const toVolume = resliceVolume(volume, toPlane)
+      // Source voxel (1, 2, 3) expressed in the from-plane, then remapped.
+      const sourceFractions = voxelFractions(volume, 1, 2, 3)
+      const fromPoint = sourcePointToPlane(sourceFractions, 'axial', fromPlane)
+      const mapped = mapPlaneLocusToPlane(fromPoint, 'axial', fromPlane, toPlane)
+      const expected = sourcePointToPlane(sourceFractions, 'axial', toPlane)
+
+      expect(mapped.x).toBeCloseTo(expected.x, 10)
+      expect(mapped.y).toBeCloseTo(expected.y, 10)
+      expect(mapped.stackFraction).toBeCloseTo(expected.stackFraction, 10)
+
+      const [toWidth, toHeight, toDepth] = toVolume.dimensions
+      const mappedVoxel = voxelAt(
+        toVolume,
+        Math.round(mapped.x * (toWidth - 1)),
+        Math.round(mapped.y * (toHeight - 1)),
+        Math.round(mapped.stackFraction * (toDepth - 1)),
+      )
+      expect(mappedVoxel).toBe(voxelAt(volume, 1, 2, 3))
+
+      // Stack index continuity: not the mid-stack default for this locus.
+      const mappedSlice = Math.round(mapped.stackFraction * (toDepth - 1))
+      const midSlice = Math.floor((toDepth - 1) / 2)
+      expect(mappedSlice).not.toBe(midSlice)
+    },
+  )
+
+  it('returns the same plane point when from and to planes match', () => {
+    const point = { x: 0.25, y: 0.75, stackFraction: 0.1 }
+    expect(mapPlaneLocusToPlane(point, 'axial', 'coronal', 'coronal')).toEqual(point)
+  })
 
   it('chooses stable metric ruler intervals', () => {
     expect(rulerLengthMillimeters(240)).toBe(50)
