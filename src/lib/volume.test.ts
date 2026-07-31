@@ -7,6 +7,7 @@ import {
   normalizePhysicalSize,
   remapSliceIndexForMprDepthChange,
   sliceIndexFromStackFraction,
+  sliceIndexForVolumeChange,
   volumeLocalToImageCoords,
 } from './volume'
 import {
@@ -42,6 +43,18 @@ describe('volume utilities', () => {
     expect(midSliceIndex(21)).toBe(10)
     expect(midSliceIndex(1)).toBe(0)
     expect(midSliceIndex(0)).toBe(0)
+  })
+
+  it('does not map a non-acquired MPR index through acquired depth on a series hop', () => {
+    // Coronal index 256 is outside the prior 38-slice acquired stack. Mapping it
+    // as acquired would clamp to the end and open the new 30-slice series at 29.
+    expect(sliceIndexForVolumeChange(256, 38, 30, false)).toBe(14)
+    expect(sliceIndexForVolumeChange(256, 38, 30, null)).toBe(14)
+  })
+
+  it('preserves relative position when the prior index is acquired-stack based', () => {
+    expect(sliceIndexForVolumeChange(10, 41, 21, true)).toBe(5)
+    expect(sliceIndexForVolumeChange(40, 41, 21, true)).toBe(20)
   })
 
   it('remaps MPR slice index when reformat stack depth changes on the same non-acquired plane', () => {

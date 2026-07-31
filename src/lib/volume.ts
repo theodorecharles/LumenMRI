@@ -78,6 +78,23 @@ export function mapRelativeSliceIndex(
 }
 
 /**
+ * Choose an acquired-stack index when the primary volume changes. Relative
+ * mapping is only valid when the prior index also belonged to its acquired
+ * stack; a non-acquired MPR index uses a different depth and resets to center.
+ */
+export function sliceIndexForVolumeChange(
+  previousIndex: number,
+  previousDepth: number | null | undefined,
+  nextDepth: number,
+  previousSlicePlaneWasAcquired: boolean | null | undefined,
+): number {
+  if (!previousSlicePlaneWasAcquired || previousDepth == null) {
+    return midSliceIndex(nextDepth)
+  }
+  return mapRelativeSliceIndex(previousIndex, previousDepth, nextDepth)
+}
+
+/**
  * Remap 2D sliceIndex when the active MPR stack depth changes without a plane
  * switch — reconstruction becomes ready, or Enhanced/Acquired toggle on a
  * non-acquired reformat (e.g. coronal of a 1024→512 downsampled axial).

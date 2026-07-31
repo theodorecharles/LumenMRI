@@ -39,6 +39,7 @@ import {
   midSliceIndex,
   remapSliceIndexForMprDepthChange,
   sliceIndexFromStackFraction,
+  sliceIndexForVolumeChange,
 } from './lib/volume'
 import {
   bundledSeriesSummary,
@@ -109,6 +110,8 @@ export default function App() {
   const openGenerationRef = useRef(0)
   /** Through-plane depth of the last applied volume; null means no prior slice context. */
   const previousDepthRef = useRef<number | null>(null)
+  /** Whether sliceIndex belonged to that volume's acquired stack before it changed. */
+  const previousSlicePlaneWasAcquiredRef = useRef<boolean | null>(null)
   /**
    * Active 2D/MPR stack depth + plane + series for remapping sliceIndex when
    * reformat depth changes without a plane/series switch (recon ready /
@@ -615,18 +618,18 @@ export default function App() {
   useEffect(() => {
     if (!volume) {
       previousDepthRef.current = null
+      previousSlicePlaneWasAcquiredRef.current = null
       return
     }
     rememberVolume(volume)
     setSlicePlane(anatomicalPlaneFromOrientation(volume.orientation))
     const nextDepth = volume.dimensions[2]
-    const previousDepth = previousDepthRef.current
-    let nextSlice: number
-    if (previousDepth != null && previousDepth > 0) {
-      nextSlice = mapRelativeSliceIndex(sliceIndexRef.current, previousDepth, nextDepth)
-    } else {
-      nextSlice = midSliceIndex(nextDepth)
-    }
+    const nextSlice = sliceIndexForVolumeChange(
+      sliceIndexRef.current,
+      previousDepthRef.current,
+      nextDepth,
+      previousSlicePlaneWasAcquiredRef.current,
+    )
     setSliceIndex(nextSlice)
     previousDepthRef.current = nextDepth
     setCropBounds(FULL_CROP)
@@ -639,6 +642,13 @@ export default function App() {
       )
     }
   }, [rememberVolume, volume])
+
+  // Update after the volume-change effect so a series hop reads the plane state
+  // belonging to the volume that was visible before the hop.
+  useEffect(() => {
+    if (!volume) return
+    previousSlicePlaneWasAcquiredRef.current = slicePlaneIsAcquired
+  }, [slicePlaneIsAcquired, volume])
 
   // Local compare load failures clear the worker handler but not this UI busy flag.
   useEffect(() => {
