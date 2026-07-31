@@ -65,6 +65,27 @@ describe('samplePixelAt', () => {
     expect(narrow!.display).toBeLessThanOrEqual(255)
   })
 
+  it('respects inverted display mapping for live probe D without changing stored I/scalar', () => {
+    const volume = makeVolume()
+    const nx = (2 + 0.5) / 4
+    const ny = 0.5 / 3
+    const normal = samplePixelAt(volume, 0, nx, ny, 1, 0.5, false)
+    const inverted = samplePixelAt(volume, 0, nx, ny, 1, 0.5, true)
+    expect(normal).not.toBeNull()
+    expect(inverted).not.toBeNull()
+    // Stored intensity and scalar are display-independent.
+    expect(inverted!.intensity).toBe(normal!.intensity)
+    expect(inverted!.scalar).toBe(normal!.scalar)
+    expect(inverted!.col).toBe(normal!.col)
+    expect(inverted!.row).toBe(normal!.row)
+    // Display gray flips polarity after W/L.
+    expect(normal!.display).toBe(100)
+    expect(inverted!.display).toBe(255 - normal!.display)
+    // Default invert arg is false (parity with legacy callers).
+    const defaultArg = samplePixelAt(volume, 0, nx, ny, 1, 0.5)
+    expect(defaultArg!.display).toBe(normal!.display)
+  })
+
   it('returns null for out-of-bounds coords', () => {
     const volume = makeVolume()
     expect(samplePixelAt(volume, 0, -0.1, 0.5, 1, 0.5)).toBeNull()

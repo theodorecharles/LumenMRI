@@ -524,7 +524,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       if (interactionRef.current?.type === 'measurement') interactionRef.current = null
     }, [safeIndex])
 
-    // Keep live probe display gray in sync when W/L sliders change under a parked cursor.
+    // Keep live probe display gray in sync when W/L or invert changes under a parked cursor.
     useEffect(() => {
       setProbeHover((current) => {
         if (!current) return null
@@ -535,11 +535,12 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
           current.y,
           volumeSettings.window,
           volumeSettings.level,
+          invertDisplay,
         )
         if (!sample) return null
         return { x: current.x, y: current.y, sample }
       })
-    }, [safeIndex, volume, volumeSettings.level, volumeSettings.window])
+    }, [safeIndex, volume, volumeSettings.level, volumeSettings.window, invertDisplay])
 
     useEffect(() => {
       if (!cinePlaying || depth <= 1) return
@@ -613,6 +614,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         point.y,
         volumeSettings.window,
         volumeSettings.level,
+        invertDisplay,
       )
       if (!sample) return null
       probeIdRef.current += 1
@@ -643,6 +645,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         point.y,
         volumeSettings.window,
         volumeSettings.level,
+        invertDisplay,
       )
       if (!sample) {
         setProbeHover(null)

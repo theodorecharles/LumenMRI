@@ -36,6 +36,7 @@ export function mapIntensityToDisplayGray(
 /**
  * Sample a single voxel under normalized canvas coordinates (0–1).
  * Returns null when the point is outside the slice or the volume is empty.
+ * `invert` affects display gray only (live probe D); intensity/scalar stay stored values.
  */
 export function samplePixelAt(
   volume: VolumeData,
@@ -44,6 +45,7 @@ export function samplePixelAt(
   normY: number,
   window: number,
   level: number,
+  invert = false,
 ): PixelProbeSample | null {
   const [width, height, depth] = volume.dimensions
   if (width <= 0 || height <= 0 || depth <= 0) return null
@@ -54,7 +56,7 @@ export function samplePixelAt(
   const row = Math.max(0, Math.min(height - 1, Math.floor(normY * height)))
   const intensity = volume.data[slice * width * height + row * width + col] ?? 0
 
-  const display = mapIntensityToDisplayGray(intensity, window, level, false)
+  const display = mapIntensityToDisplayGray(intensity, window, level, invert)
 
   const [scalarMin, scalarMax] = volume.scalarRange
   const scalar = scalarMin + (intensity / 255) * (scalarMax - scalarMin)
