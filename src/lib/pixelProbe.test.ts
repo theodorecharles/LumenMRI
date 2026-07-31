@@ -86,6 +86,21 @@ describe('samplePixelAt', () => {
     expect(defaultArg!.display).toBe(normal!.display)
   })
 
+  it('leaves volume.data byte-identical when sampling with invert (AC-3)', () => {
+    const volume = makeVolume()
+    const dataRef = volume.data
+    const before = Uint8Array.from(volume.data)
+    samplePixelAt(volume, 0, 0.5, 0.5, 1, 0.5, true)
+    samplePixelAt(volume, 1, 0.25, 0.75, 0.4, 0.6, true)
+    mapIntensityToDisplayGray(volume.data[0] ?? 0, 1, 0.5, true)
+    // Same buffer identity and contents — invert never rewrites storage.
+    expect(volume.data).toBe(dataRef)
+    expect(volume.data).toEqual(before)
+    for (let i = 0; i < before.length; i += 1) {
+      expect(volume.data[i]).toBe(before[i])
+    }
+  })
+
   it('returns null for out-of-bounds coords', () => {
     const volume = makeVolume()
     expect(samplePixelAt(volume, 0, -0.1, 0.5, 1, 0.5)).toBeNull()
