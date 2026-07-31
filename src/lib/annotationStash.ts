@@ -1,6 +1,6 @@
 /**
  * Session stash for 2D annotations keyed by seriesId.
- * Survives active-series hops within a study; cleared only on library home / new scan (later AC).
+ * Survives active-series hops within a study; cleared only on library home / new scan.
  */
 
 export type StashedMeasurementTool = 'distance' | 'roi' | 'angle'
@@ -43,8 +43,17 @@ export interface SeriesAnnotationSnapshot {
 
 export type AnnotationStash = Map<string, SeriesAnnotationSnapshot>
 
+const stashGenerations = new WeakMap<AnnotationStash, number>()
+
 export function createAnnotationStash(): AnnotationStash {
-  return new Map()
+  const stash: AnnotationStash = new Map()
+  stashGenerations.set(stash, 0)
+  return stash
+}
+
+/** Session generation used to reject writes from viewers mounted before a clear. */
+export function annotationStashGeneration(stash: AnnotationStash): number {
+  return stashGenerations.get(stash) ?? 0
 }
 
 export function emptyAnnotationSnapshot(): SeriesAnnotationSnapshot {
@@ -116,15 +125,24 @@ export function restoreSeriesAnnotations(
  *
  * `previousSeriesId === null` means mount / remount (no live outgoing marks to
  * write); still rehydrates `nextSeriesId` from the stash so layout switches keep
- * annotations.
+ * annotations. A stale `previousGeneration` means the prior viewer belongs to a
+ * cleared session, so its outgoing marks must not repopulate the Map.
  */
 export function hopSeriesAnnotations(
   stash: AnnotationStash,
   previousSeriesId: string | null,
   nextSeriesId: string,
   outgoing: SeriesAnnotationSnapshot,
+  previousGeneration = annotationStashGeneration(stash),
 ): SeriesAnnotationSnapshot {
-  if (previousSeriesId !== null && previousSeriesId !== nextSeriesId) {
+  const currentGeneration = annotationStashGeneration(stash)
+  if (previousGeneration !== currentGeneration) {
+    return restoreSeriesAnnotations(stash, nextSeriesId)
+  }
+  if (
+    previousSeriesId !== null
+    && previousSeriesId !== nextSeriesId
+  ) {
     stashSeriesAnnotations(stash, previousSeriesId, outgoing)
   }
   if (previousSeriesId === null || previousSeriesId !== nextSeriesId) {
@@ -140,6 +158,7 @@ export function hopSeriesAnnotations(
  */
 export function clearAnnotationStash(stash: AnnotationStash): void {
   stash.clear()
+  stashGenerations.set(stash, annotationStashGeneration(stash) + 1)
 }
 
 /** Highest measurement/probe id in a snapshot (for id counter re-seed). */

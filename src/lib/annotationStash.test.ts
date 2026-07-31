@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  annotationStashGeneration,
   clearAnnotationStash,
   cloneAnnotationSnapshot,
   createAnnotationStash,
@@ -135,6 +136,26 @@ describe('annotationStash', () => {
     clearAnnotationStash(stash)
     expect(restoreSeriesAnnotations(stash, 'a')).toEqual(emptyAnnotationSnapshot())
     expect(restoreSeriesAnnotations(stash, 'b')).toEqual(emptyAnnotationSnapshot())
+    expect(stash.size).toBe(0)
+  })
+
+  it('rejects stale viewer writes after a session-boundary clear', () => {
+    const stash = createAnnotationStash()
+    const mountedGeneration = annotationStashGeneration(stash)
+    stashSeriesAnnotations(stash, 'series-flair', sampleSnapshot())
+
+    clearAnnotationStash(stash)
+    expect(annotationStashGeneration(stash)).toBe(mountedGeneration + 1)
+
+    const restored = hopSeriesAnnotations(
+      stash,
+      'series-flair',
+      'series-flair',
+      sampleSnapshot(),
+      mountedGeneration,
+    )
+
+    expect(restored).toEqual(emptyAnnotationSnapshot())
     expect(stash.size).toBe(0)
   })
 

@@ -39,7 +39,7 @@ import {
   midSliceIndex,
   sliceIndexFromStackFraction,
 } from './lib/volume'
-import { createAnnotationStash } from './lib/annotationStash'
+import { clearAnnotationStash, createAnnotationStash } from './lib/annotationStash'
 import {
   bundledSeriesSummary,
   loadBundledCatalog,
@@ -507,6 +507,7 @@ export default function App() {
       const match = window.location.hash.match(/^#series\/(.+)$/)
       if (!match) {
         // Browser Back to library while a bundled open is in flight.
+        clearAnnotationStash(annotationStashRef.current)
         cancelPendingOpen()
         clearCompare()
         setScreen('library')
@@ -545,6 +546,7 @@ export default function App() {
   }, [bundledSeries, cancelInFlight, cancelPendingOpen, clearCompare, loadSeries, openBundledSeries, series])
 
   const goHome = useCallback((pushHistory = true) => {
+    clearAnnotationStash(annotationStashRef.current)
     cancelPendingOpen()
     // Abandon in-flight / applied compare so busy cannot stick after leaving the viewer.
     clearCompare()
@@ -558,6 +560,7 @@ export default function App() {
   const handleFiles = useCallback(
     (files: File[]) => {
       if (!files.length) return
+      clearAnnotationStash(annotationStashRef.current)
       // Drop any in-flight bundled open so a late fetch cannot overwrite this local intent.
       cancelPendingOpen()
       clearCompare()

@@ -15,6 +15,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import {
+  annotationStashGeneration,
   hopSeriesAnnotations,
   maxAnnotationId,
   stashSeriesAnnotations,
@@ -302,6 +303,8 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     /** Shared session Map from App — series-card / Compare B hops must not clear it. */
     const annotationStashRef = useRef(annotationStash)
     annotationStashRef.current = annotationStash
+    /** Generation of the session that owns the currently displayed annotations. */
+    const annotationStashGenerationRef = useRef(annotationStashGeneration(annotationStash))
     /** null until first series effect — distinguishes mount rehydrate from live hop. */
     const seriesIdRef = useRef<string | null>(null)
     const measurementsRef = useRef<Measurement[]>([])
@@ -488,6 +491,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     useEffect(() => {
       const previousSeriesId = seriesIdRef.current
       const nextSeriesId = volume.seriesId
+      const currentStashGeneration = annotationStashGeneration(annotationStashRef.current)
 
       // Series-card / Compare B hop (or mount remount): stash+restore only — never clear.
       if (previousSeriesId !== nextSeriesId) {
@@ -499,6 +503,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
             measurements: measurementsRef.current,
             pinnedProbes: pinnedProbesRef.current,
           },
+          annotationStashGenerationRef.current,
         )
         setMeasurements(restored.measurements as Measurement[])
         setPinnedProbes(restored.pinnedProbes as PinnedProbe[])
@@ -507,6 +512,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         if (highId > probeIdRef.current) probeIdRef.current = highId
         seriesIdRef.current = nextSeriesId
       }
+      annotationStashGenerationRef.current = currentStashGeneration
 
       // In-progress tools never carry across series; completed marks come from the stash.
       setMeasurementDraft(null)
@@ -524,11 +530,15 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       setPanning(false)
     }, [volume.seriesId])
 
-    // Persist active series on unmount (layout switch / leave viewer) so the shared Map keeps marks.
+    // Persist on ordinary remounts; a session-boundary generation change suppresses stale writes.
     useEffect(() => {
       return () => {
         const activeId = seriesIdRef.current
         if (!activeId) return
+        if (
+          annotationStashGenerationRef.current
+          !== annotationStashGeneration(annotationStashRef.current)
+        ) return
         stashSeriesAnnotations(annotationStashRef.current, activeId, {
           measurements: measurementsRef.current,
           pinnedProbes: pinnedProbesRef.current,
