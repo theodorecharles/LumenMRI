@@ -110,7 +110,34 @@ export function restoreSeriesAnnotations(
   return found ? cloneAnnotationSnapshot(found) : emptyAnnotationSnapshot()
 }
 
-/** Drop the entire session stash (library home / new local open). */
+/**
+ * Series-card click or Compare B hop: stash the outgoing series (when known) and
+ * restore the incoming one. Never clears the Map — peer series stay put.
+ *
+ * `previousSeriesId === null` means mount / remount (no live outgoing marks to
+ * write); still rehydrates `nextSeriesId` from the stash so layout switches keep
+ * annotations.
+ */
+export function hopSeriesAnnotations(
+  stash: AnnotationStash,
+  previousSeriesId: string | null,
+  nextSeriesId: string,
+  outgoing: SeriesAnnotationSnapshot,
+): SeriesAnnotationSnapshot {
+  if (previousSeriesId !== null && previousSeriesId !== nextSeriesId) {
+    stashSeriesAnnotations(stash, previousSeriesId, outgoing)
+  }
+  if (previousSeriesId === null || previousSeriesId !== nextSeriesId) {
+    return restoreSeriesAnnotations(stash, nextSeriesId)
+  }
+  return cloneAnnotationSnapshot(outgoing)
+}
+
+/**
+ * Drop the entire session stash.
+ * Call only on full library home or a new local open (AC-4) — never on series-card
+ * clicks or Compare B series hops (AC-3).
+ */
 export function clearAnnotationStash(stash: AnnotationStash): void {
   stash.clear()
 }

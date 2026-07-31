@@ -15,10 +15,10 @@ import {
   Trash2,
 } from 'lucide-react'
 import {
-  createAnnotationStash,
+  hopSeriesAnnotations,
   maxAnnotationId,
-  restoreSeriesAnnotations,
   stashSeriesAnnotations,
+  type AnnotationStash,
 } from '../lib/annotationStash'
 import { rulerLengthMillimeters } from '../lib/mpr'
 import { formatProbeScalar, samplePixelAt, type PixelProbeSample } from '../lib/pixelProbe'
@@ -89,6 +89,11 @@ interface SliceViewerProps {
   slicePlane?: AnatomicalPlane
   acquiredPlane?: AnatomicalPlane
   onSlicePlaneChange?: (plane: AnatomicalPlane) => void
+  /**
+   * Session stash of 2D marks keyed by seriesId. Owned by App so series-card
+   * clicks, Compare B hops, and layout remounts share one Map and never drop it.
+   */
+  annotationStash: AnnotationStash
 }
 
 interface CanvasRect {
@@ -283,6 +288,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     slicePlane,
     acquiredPlane,
     onSlicePlaneChange,
+    annotationStash,
   }, forwardedRef) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const viewportRef = useRef<HTMLDivElement>(null)
@@ -293,9 +299,11 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const annotationFlashTokenRef = useRef(0)
     const angleBuildRef = useRef<AngleBuild | null>(null)
     const sliceIndexRef = useRef(sliceIndex)
-    /** Session stash of 2D marks keyed by seriesId — survives active-series hops. */
-    const annotationStashRef = useRef(createAnnotationStash())
-    const seriesIdRef = useRef(volume.seriesId)
+    /** Shared session Map from App — series-card / Compare B hops must not clear it. */
+    const annotationStashRef = useRef(annotationStash)
+    annotationStashRef.current = annotationStash
+    /** null until first series effect — distinguishes mount rehydrate from live hop. */
+    const seriesIdRef = useRef<string | null>(null)
     const measurementsRef = useRef<Measurement[]>([])
     const pinnedProbesRef = useRef<PinnedProbe[]>([])
     const viewRef = useRef<ViewTransform>(FIT_VIEW)
@@ -481,13 +489,17 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       const previousSeriesId = seriesIdRef.current
       const nextSeriesId = volume.seriesId
 
-      // First mount shares the same id — nothing to stash. Series hop stashes outgoing marks.
+      // Series-card / Compare B hop (or mount remount): stash+restore only — never clear.
       if (previousSeriesId !== nextSeriesId) {
-        stashSeriesAnnotations(annotationStashRef.current, previousSeriesId, {
-          measurements: measurementsRef.current,
-          pinnedProbes: pinnedProbesRef.current,
-        })
-        const restored = restoreSeriesAnnotations(annotationStashRef.current, nextSeriesId)
+        const restored = hopSeriesAnnotations(
+          annotationStashRef.current,
+          previousSeriesId,
+          nextSeriesId,
+          {
+            measurements: measurementsRef.current,
+            pinnedProbes: pinnedProbesRef.current,
+          },
+        )
         setMeasurements(restored.measurements as Measurement[])
         setPinnedProbes(restored.pinnedProbes as PinnedProbe[])
         const highId = maxAnnotationId(restored)
@@ -511,6 +523,18 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       }
       setPanning(false)
     }, [volume.seriesId])
+
+    // Persist active series on unmount (layout switch / leave viewer) so the shared Map keeps marks.
+    useEffect(() => {
+      return () => {
+        const activeId = seriesIdRef.current
+        if (!activeId) return
+        stashSeriesAnnotations(annotationStashRef.current, activeId, {
+          measurements: measurementsRef.current,
+          pinnedProbes: pinnedProbesRef.current,
+        })
+      }
+    }, [])
 
     useEffect(() => {
       if (!annotationFlash) return

@@ -4,6 +4,7 @@ import {
   cloneAnnotationSnapshot,
   createAnnotationStash,
   emptyAnnotationSnapshot,
+  hopSeriesAnnotations,
   maxAnnotationId,
   restoreSeriesAnnotations,
   stashSeriesAnnotations,
@@ -135,6 +136,117 @@ describe('annotationStash', () => {
     expect(restoreSeriesAnnotations(stash, 'a')).toEqual(emptyAnnotationSnapshot())
     expect(restoreSeriesAnnotations(stash, 'b')).toEqual(emptyAnnotationSnapshot())
     expect(stash.size).toBe(0)
+  })
+
+  describe('AC-3: series-card / Compare B hops do not clear the stash', () => {
+    it('hopSeriesAnnotations stashes outgoing and restores incoming without clear', () => {
+      const stash = createAnnotationStash()
+      const flair = sampleSnapshot()
+      const t1: SeriesAnnotationSnapshot = {
+        measurements: [
+          {
+            id: 10,
+            tool: 'distance',
+            slice: 0,
+            start: { x: 0, y: 0 },
+            end: { x: 1, y: 1 },
+          },
+        ],
+        pinnedProbes: [],
+      }
+
+      // Primary series-card hop FLAIR → T1 (outgoing live marks on FLAIR).
+      const afterToT1 = hopSeriesAnnotations(stash, 'series-flair', 'series-t1', flair)
+      expect(afterToT1).toEqual(emptyAnnotationSnapshot())
+      expect(stash.size).toBe(1)
+      expect(restoreSeriesAnnotations(stash, 'series-flair').measurements).toHaveLength(2)
+
+      // User adds T1 marks, hops back to FLAIR (second series-card click).
+      const afterBackToFlair = hopSeriesAnnotations(stash, 'series-t1', 'series-flair', t1)
+      expect(afterBackToFlair.measurements.map((m) => m.tool)).toEqual(['distance', 'roi'])
+      expect(afterBackToFlair.pinnedProbes).toHaveLength(1)
+      expect(stash.size).toBe(2)
+      expect(restoreSeriesAnnotations(stash, 'series-t1').measurements[0]?.id).toBe(10)
+    })
+
+    it('Compare B series hop preserves primary (peer) series entries in the same Map', () => {
+      const stash = createAnnotationStash()
+      // Primary already stashed FLAIR marks (shared session Map).
+      stashSeriesAnnotations(stash, 'series-flair', sampleSnapshot())
+
+      // Compare pane B: mount on ADC, then hop B to T1 — must not drop FLAIR.
+      const onBMount = hopSeriesAnnotations(
+        stash,
+        null,
+        'series-adc',
+        emptyAnnotationSnapshot(),
+      )
+      expect(onBMount).toEqual(emptyAnnotationSnapshot())
+
+      const adcMarks: SeriesAnnotationSnapshot = {
+        measurements: [
+          {
+            id: 20,
+            tool: 'roi',
+            slice: 1,
+            start: { x: 0.1, y: 0.1 },
+            end: { x: 0.5, y: 0.5 },
+          },
+        ],
+        pinnedProbes: [],
+      }
+      hopSeriesAnnotations(stash, 'series-adc', 'series-t1', adcMarks)
+
+      expect(stash.has('series-flair')).toBe(true)
+      expect(stash.has('series-adc')).toBe(true)
+      expect(restoreSeriesAnnotations(stash, 'series-flair').pinnedProbes).toHaveLength(1)
+      expect(restoreSeriesAnnotations(stash, 'series-adc').measurements[0]?.id).toBe(20)
+      // No clearAnnotationStash: Map still holds peer series after B hop.
+      expect(stash.size).toBe(2)
+    })
+
+    it('layout remount rehydrates the active series without clearing peers', () => {
+      const stash = createAnnotationStash()
+      stashSeriesAnnotations(stash, 'series-flair', sampleSnapshot())
+      stashSeriesAnnotations(stash, 'series-t1', {
+        measurements: [
+          {
+            id: 7,
+            tool: 'distance',
+            slice: 0,
+            start: { x: 0, y: 0 },
+            end: { x: 1, y: 1 },
+          },
+        ],
+        pinnedProbes: [],
+      })
+
+      // Remount primary on FLAIR (e.g. enter Compare layout) — previousSeriesId null.
+      const rehydrated = hopSeriesAnnotations(
+        stash,
+        null,
+        'series-flair',
+        emptyAnnotationSnapshot(),
+      )
+      expect(rehydrated.measurements).toHaveLength(2)
+      expect(stash.size).toBe(2)
+      expect(restoreSeriesAnnotations(stash, 'series-t1').measurements[0]?.id).toBe(7)
+    })
+
+    it('hop never empties the Map the way clearAnnotationStash does', () => {
+      const stash = createAnnotationStash()
+      stashSeriesAnnotations(stash, 'a', sampleSnapshot())
+      stashSeriesAnnotations(stash, 'b', sampleSnapshot())
+      const sizeBefore = stash.size
+
+      hopSeriesAnnotations(stash, 'a', 'c', sampleSnapshot())
+      expect(stash.size).toBeGreaterThanOrEqual(sizeBefore)
+      expect(stash.has('a')).toBe(true)
+      expect(stash.has('b')).toBe(true)
+
+      clearAnnotationStash(stash)
+      expect(stash.size).toBe(0)
+    })
   })
 
   it('maxAnnotationId tracks the highest measurement or probe id', () => {
