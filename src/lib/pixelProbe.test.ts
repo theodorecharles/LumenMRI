@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatProbeScalar, samplePixelAt } from './pixelProbe'
+import { formatProbeScalar, mapIntensityToDisplayGray, samplePixelAt } from './pixelProbe'
 import type { VolumeData } from '../types'
 
 function makeVolume(overrides: Partial<VolumeData> = {}): VolumeData {
@@ -83,5 +83,26 @@ describe('formatProbeScalar', () => {
     expect(formatProbeScalar(512)).toBe('512')
     expect(formatProbeScalar(12.34)).toBe('12.3')
     expect(formatProbeScalar(1.234)).toBe('1.23')
+  })
+})
+
+describe('mapIntensityToDisplayGray', () => {
+  it('matches full-window identity mapping without invert', () => {
+    // intensity 100, window=1, level=0.5 → display 100
+    expect(mapIntensityToDisplayGray(100, 1, 0.5, false)).toBe(100)
+  })
+
+  it('flips polarity after window/level when invert is true', () => {
+    const normal = mapIntensityToDisplayGray(100, 1, 0.5, false)
+    const inverted = mapIntensityToDisplayGray(100, 1, 0.5, true)
+    expect(inverted).toBe(255 - normal)
+    expect(mapIntensityToDisplayGray(0, 1, 0.5, true)).toBe(255)
+    expect(mapIntensityToDisplayGray(255, 1, 0.5, true)).toBe(0)
+  })
+
+  it('does not mutate input intensity values (display-only)', () => {
+    const intensity = 128
+    mapIntensityToDisplayGray(intensity, 0.5, 0.5, true)
+    expect(intensity).toBe(128)
   })
 })

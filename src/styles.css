@@ -2760,6 +2760,12 @@ button:disabled {
   background: rgba(72, 210, 150, 0.12);
 }
 
+.measurement-toolbar button.invert-active {
+  color: #ebe4ff;
+  border-color: rgba(190, 170, 255, 0.4);
+  background: rgba(140, 120, 220, 0.14);
+}
+
 .measurement-overlay .is-flashing,
 .measurement-label.is-flashing,
 .pixel-probe-pin.is-flashing {
