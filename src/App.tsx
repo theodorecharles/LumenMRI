@@ -159,7 +159,7 @@ export default function App() {
   /** Brief "Copied" toast after a successful clipboard capture. */
   const [captureToast, setCaptureToast] = useState<string | null>(null)
   const captureToastTimerRef = useRef<number | null>(null)
-  /** Brief 2D crosshair flash after a 3D volume slice pick (token forces re-trigger). */
+  /** Brief 2D crosshair flash after a 3D volume pick or MPR plane switch (token re-triggers). */
   const [slicePickFlash, setSlicePickFlash] = useState<{
     token: number
     x: number
@@ -715,7 +715,13 @@ export default function App() {
     )
     setSlicePlane(nextPlane)
     setSliceIndex(sliceIndexFromStackFraction(mapped.stackFraction, nextVolume.dimensions[2]))
-    setSlicePickFlash(null)
+    // Flash at the mapped in-plane point so the preserved locus is obvious.
+    slicePickFlashTokenRef.current += 1
+    setSlicePickFlash({
+      token: slicePickFlashTokenRef.current,
+      x: mapped.x,
+      y: mapped.y,
+    })
     setCropEditing(false)
     setShowSliceHighlight(false)
   }, [
