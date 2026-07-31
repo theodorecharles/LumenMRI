@@ -9,6 +9,13 @@ export interface ReconstructionState {
   message: string
 }
 
+export interface UseVolumeReconstructionOptions {
+  /** When false, no reconstruction worker is created. Defaults to true. */
+  enabled?: boolean
+  /** Series identity for the active volume; defaults to `source?.seriesId`. */
+  seriesId?: string | null
+}
+
 const IDLE_STATE: ReconstructionState = {
   status: 'idle',
   progress: 0,
@@ -16,12 +23,18 @@ const IDLE_STATE: ReconstructionState = {
   message: 'Waiting for volume',
 }
 
-export function useVolumeReconstruction(source: VolumeData | null) {
+export function useVolumeReconstruction(
+  source: VolumeData | null,
+  options: UseVolumeReconstructionOptions = {},
+) {
+  const enabled = options.enabled ?? true
+  const seriesId = options.seriesId ?? source?.seriesId ?? null
   const requestRef = useRef(0)
   const [state, setState] = useState<ReconstructionState>(IDLE_STATE)
 
   useEffect(() => {
-    if (!source) {
+    // No source or reconstruction disabled: do not create a worker.
+    if (!source || !enabled) {
       setState(IDLE_STATE)
       return
     }
@@ -30,7 +43,7 @@ export function useVolumeReconstruction(source: VolumeData | null) {
     const worker = new Worker(new URL('../workers/reconstruction.worker.ts', import.meta.url), {
       type: 'module',
     })
-    const options = reconstructionOptionsForDevice({
+    const deviceOptions = reconstructionOptionsForDevice({
       compactViewport: window.matchMedia('(max-width: 690px)').matches,
       hardwareConcurrency: navigator.hardwareConcurrency,
     })
@@ -77,15 +90,15 @@ export function useVolumeReconstruction(source: VolumeData | null) {
 
     worker.postMessage({
       requestId,
-      seriesId: source.seriesId,
+      seriesId: seriesId ?? source.seriesId,
       data: copy,
       dimensions: source.dimensions,
       spacing: source.spacing,
-      options,
+      options: deviceOptions,
     }, [copy.buffer])
 
     return () => worker.terminate()
-  }, [source])
+  }, [source, enabled, seriesId])
 
   return state
 }
