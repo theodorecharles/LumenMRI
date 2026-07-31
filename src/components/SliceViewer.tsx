@@ -14,6 +14,12 @@ import {
   SquareDashed,
   Trash2,
 } from 'lucide-react'
+import {
+  createAnnotationStash,
+  maxAnnotationId,
+  restoreSeriesAnnotations,
+  stashSeriesAnnotations,
+} from '../lib/annotationStash'
 import { rulerLengthMillimeters } from '../lib/mpr'
 import { formatProbeScalar, samplePixelAt, type PixelProbeSample } from '../lib/pixelProbe'
 import { computeRoiStats, formatRoiSummary } from '../lib/roiStats'
@@ -287,6 +293,11 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const annotationFlashTokenRef = useRef(0)
     const angleBuildRef = useRef<AngleBuild | null>(null)
     const sliceIndexRef = useRef(sliceIndex)
+    /** Session stash of 2D marks keyed by seriesId — survives active-series hops. */
+    const annotationStashRef = useRef(createAnnotationStash())
+    const seriesIdRef = useRef(volume.seriesId)
+    const measurementsRef = useRef<Measurement[]>([])
+    const pinnedProbesRef = useRef<PinnedProbe[]>([])
     const viewRef = useRef<ViewTransform>(FIT_VIEW)
     const [canvasRect, setCanvasRect] = useState<CanvasRect | null>(null)
     const [localView, setLocalView] = useState<ViewTransform>(FIT_VIEW)
@@ -311,6 +322,8 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       sample: PixelProbeSample
     } | null>(null)
     const [pinnedProbes, setPinnedProbes] = useState<PinnedProbe[]>([])
+    measurementsRef.current = measurements
+    pinnedProbesRef.current = pinnedProbes
     const [windowLevelDrag, setWindowLevelDrag] = useState<{ window: number; level: number } | null>(null)
     const [cinePlaying, setCinePlaying] = useState(false)
     const [cineFps, setCineFps] = useState<CineFps>(10)
@@ -465,12 +478,29 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     }, [height, width])
 
     useEffect(() => {
-      setMeasurements([])
+      const previousSeriesId = seriesIdRef.current
+      const nextSeriesId = volume.seriesId
+
+      // First mount shares the same id — nothing to stash. Series hop stashes outgoing marks.
+      if (previousSeriesId !== nextSeriesId) {
+        stashSeriesAnnotations(annotationStashRef.current, previousSeriesId, {
+          measurements: measurementsRef.current,
+          pinnedProbes: pinnedProbesRef.current,
+        })
+        const restored = restoreSeriesAnnotations(annotationStashRef.current, nextSeriesId)
+        setMeasurements(restored.measurements as Measurement[])
+        setPinnedProbes(restored.pinnedProbes as PinnedProbe[])
+        const highId = maxAnnotationId(restored)
+        if (highId > measurementIdRef.current) measurementIdRef.current = highId
+        if (highId > probeIdRef.current) probeIdRef.current = highId
+        seriesIdRef.current = nextSeriesId
+      }
+
+      // In-progress tools never carry across series; completed marks come from the stash.
       setMeasurementDraft(null)
       setMeasurementTool(null)
       setProbeTool(false)
       setProbeHover(null)
-      setPinnedProbes([])
       setAnnotationFlash(null)
       angleBuildRef.current = null
       interactionRef.current = null
