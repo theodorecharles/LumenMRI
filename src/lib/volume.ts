@@ -77,6 +77,36 @@ export function mapRelativeSliceIndex(
   return Math.max(0, Math.min(nextDepth - 1, Math.round(fraction * (nextDepth - 1))))
 }
 
+/**
+ * Remap 2D sliceIndex when the active MPR stack depth changes without a plane
+ * switch — reconstruction becomes ready, or Enhanced/Acquired toggle on a
+ * non-acquired reformat (e.g. coronal of a 1024→512 downsampled axial).
+ * Returns previousIndex unchanged when no remap should apply (acquired plane,
+ * plane/series just changed, missing prior depth, or same depth).
+ */
+export function remapSliceIndexForMprDepthChange(
+  previousIndex: number,
+  previousDepth: number | null | undefined,
+  nextDepth: number,
+  options: {
+    planeChanged: boolean
+    slicePlaneIsAcquired: boolean
+    /** Primary series hop — volume-change effect owns sliceIndex. */
+    seriesChanged?: boolean
+  },
+): number {
+  if (
+    options.slicePlaneIsAcquired
+    || options.planeChanged
+    || options.seriesChanged
+  ) {
+    return previousIndex
+  }
+  if (previousDepth == null || previousDepth <= 0 || nextDepth <= 0) return previousIndex
+  if (previousDepth === nextDepth) return previousIndex
+  return mapRelativeSliceIndex(previousIndex, previousDepth, nextDepth)
+}
+
 export function createDemoVolume(size = 96): VolumeData {
   const width = size
   const height = Math.round(size * 1.06)
