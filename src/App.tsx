@@ -46,6 +46,7 @@ import {
   type BundledCatalog,
   type BundledSeries,
 } from './lib/bundledVolume'
+import { VolumeCache } from './lib/volumeCache'
 import type {
   AnatomicalPlane,
   CropBounds,
@@ -103,7 +104,7 @@ export default function App() {
   const sliceViewerRef = useRef<SliceViewerHandle>(null)
   const compareSliceViewerRef = useRef<SliceViewerHandle>(null)
   const stageRef = useRef<HTMLElement>(null)
-  const volumeCache = useRef(new Map<string, VolumeData>())
+  const volumeCache = useRef(new VolumeCache())
   /** Bumps on each bundled open so a later click can supersede an in-flight load. */
   const openGenerationRef = useRef(0)
   /** Through-plane depth of the last applied volume; null means no prior slice context. */
@@ -220,8 +221,13 @@ export default function App() {
   }, [])
 
   const rememberVolume = useCallback((next: VolumeData) => {
-    volumeCache.current.set(next.seriesId, next)
+    volumeCache.current.set(next)
   }, [])
+
+  // Pin active primary + compare so LRU eviction can drop the rest for GC.
+  useEffect(() => {
+    volumeCache.current.setPins(activeSeriesId, compareSeriesId)
+  }, [activeSeriesId, compareSeriesId])
 
   const clearCompare = useCallback(() => {
     compareOpeningIdRef.current = null
@@ -373,7 +379,7 @@ export default function App() {
         if (!selectedVolume) {
           selectedVolume = await loadBundledVolume(selection)
           // Cache even if superseded/cancelled so a later open of the same series is free.
-          volumeCache.current.set(selection.id, selectedVolume)
+          volumeCache.current.set(selectedVolume)
         }
         // Stale generation (superseded click or user left open intent) — do not force viewer.
         if (generation !== openGenerationRef.current) return
