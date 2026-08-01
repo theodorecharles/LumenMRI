@@ -1,5 +1,6 @@
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { isReconstructionReady } from '../lib/reconstructVolume'
 import type { ReconstructedVolume, VolumeData } from '../types'
 import { useVolumeReconstruction } from './useVolumeReconstruction'
 
@@ -181,5 +182,65 @@ describe('useVolumeReconstruction stale requestId guard (AC-1)', () => {
     expect(result.current.volume).toBeNull()
     expect(result.current.message).not.toContain('stale failure')
     expect(workerB.posted).toHaveLength(1)
+  })
+})
+
+describe('useVolumeReconstruction series hop A→B (AC-2)', () => {
+  it('hopping A→B while A completes does not leave B with A’s volume or stuck isReconstructionReady', () => {
+    const sourceA = makeSource('series-a')
+    const sourceB = makeSource('series-b')
+    const volumeA = makeReconstructed('series-a')
+    const volumeB = makeReconstructed('series-b')
+
+    const { result, rerender } = renderHook(
+      ({ source }: { source: VolumeData | null }) => useVolumeReconstruction(source),
+      { initialProps: { source: sourceA } },
+    )
+
+    const workerA = MockWorker.instances[0]
+    const requestIdA = (workerA.posted[0].data as { requestId: number }).requestId
+
+    // User hops A→B while A’s reconstruction is still in flight.
+    rerender({ source: sourceB })
+    const workerB = MockWorker.instances[1]
+    const requestIdB = (workerB.posted[0].data as { requestId: number }).requestId
+    expect(workerA.terminated).toBe(true)
+    expect(result.current.status).toBe('processing')
+    expect(result.current.volume).toBeNull()
+
+    // Queued complete from terminated worker A arrives after the hop.
+    act(() => {
+      workerA.deliver({
+        type: 'complete',
+        requestId: requestIdA,
+        volume: volumeA,
+      })
+    })
+
+    // Must not apply A’s volume onto B (that would series-mismatch Enhanced forever).
+    expect(result.current.volume).toBeNull()
+    expect(result.current.volume?.seriesId).not.toBe('series-a')
+    expect(result.current.status).not.toBe('ready')
+    expect(isReconstructionReady(result.current.volume, sourceB)).toBe(false)
+    // Guard against the stuck-failure shape: ready + wrong seriesId.
+    expect(
+      result.current.status === 'ready' &&
+        result.current.volume?.seriesId === 'series-a' &&
+        !isReconstructionReady(result.current.volume, sourceB),
+    ).toBe(false)
+
+    // B’s own complete still lands and enables Enhanced for B.
+    act(() => {
+      workerB.deliver({
+        type: 'complete',
+        requestId: requestIdB,
+        volume: volumeB,
+      })
+    })
+
+    expect(result.current.status).toBe('ready')
+    expect(result.current.volume?.seriesId).toBe('series-b')
+    expect(isReconstructionReady(result.current.volume, sourceB)).toBe(true)
+    expect(isReconstructionReady(result.current.volume, sourceA)).toBe(false)
   })
 })
