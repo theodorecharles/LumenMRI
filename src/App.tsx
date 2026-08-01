@@ -27,6 +27,7 @@ import { chooseDirectory, filesFromDrop } from './lib/fileAccess'
 import { isTextEntryTarget, targetActivatesOnKey } from './lib/keyboardShortcuts'
 import {
   anatomicalPlaneFromOrientation,
+  mapPlaneLocusToPlane,
   resliceVolume,
   sourcePointToPlane,
 } from './lib/mpr'
@@ -158,7 +159,7 @@ export default function App() {
   /** Brief "Copied" toast after a successful clipboard capture. */
   const [captureToast, setCaptureToast] = useState<string | null>(null)
   const captureToastTimerRef = useRef<number | null>(null)
-  /** Brief 2D crosshair flash after a 3D volume slice pick (token forces re-trigger). */
+  /** Brief 2D crosshair flash after a 3D volume pick or MPR plane switch (token re-triggers). */
   const [slicePickFlash, setSlicePickFlash] = useState<{
     token: number
     x: number
@@ -695,12 +696,43 @@ export default function App() {
     sliceViewerRef.current?.pauseCine()
     const nextSource = nextPlane === acquiredPlane ? volume : enhancedMprSource ?? volume
     const nextVolume = resliceVolume(nextSource, nextPlane)
+    // Keep the anatomy under the current locus (last pick, else image center)
+    // via the same sourcePointToPlane / inverse path as Alt+click picks.
+    const currentDepth = mprVolume?.dimensions[2] ?? volume.dimensions[2]
+    const stackFraction =
+      currentDepth <= 1
+        ? 0.5
+        : Math.max(0, Math.min(1, sliceIndex / (currentDepth - 1)))
+    const mapped = mapPlaneLocusToPlane(
+      {
+        x: slicePickFlash?.x ?? 0.5,
+        y: slicePickFlash?.y ?? 0.5,
+        stackFraction,
+      },
+      acquiredPlane,
+      slicePlane,
+      nextPlane,
+    )
     setSlicePlane(nextPlane)
-    setSliceIndex(midSliceIndex(nextVolume.dimensions[2]))
-    setSlicePickFlash(null)
+    setSliceIndex(sliceIndexFromStackFraction(mapped.stackFraction, nextVolume.dimensions[2]))
+    // Flash at the mapped in-plane point so the preserved locus is obvious.
+    slicePickFlashTokenRef.current += 1
+    setSlicePickFlash({
+      token: slicePickFlashTokenRef.current,
+      x: mapped.x,
+      y: mapped.y,
+    })
     setCropEditing(false)
     setShowSliceHighlight(false)
-  }, [acquiredPlane, enhancedMprSource, slicePlane, volume])
+  }, [
+    acquiredPlane,
+    enhancedMprSource,
+    mprVolume,
+    sliceIndex,
+    slicePickFlash,
+    slicePlane,
+    volume,
+  ])
 
   useEffect(() => {
     if (cropEditing) setAutoRotate(false)
