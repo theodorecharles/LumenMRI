@@ -31,7 +31,7 @@
     "@types/react-dom": "^19.0.2",
     "@types/three": "^0.171.0",
     "@vitejs/plugin-react": "^4.3.4",
-    "jsdom": "^25.0.1",
+    "jsdom": "^30.0.1",
     "pngjs": "^7.0.0",
     "typescript": "~5.7.2",
     "vite": "^6.0.5",
