@@ -132,6 +132,31 @@ describe('goHome cancels in-flight DICOM work', () => {
 
     expect(mocks.cancelInFlight).toHaveBeenCalledTimes(1)
   })
+
+  it('calls cancelInFlight when Browser Back returns to the library history entry (AC-1, AC-2)', () => {
+    const { container } = render(<App />)
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')
+    const files = [new File(['dicom'], 'slice.dcm', { type: 'application/dicom' })]
+    expect(input).not.toBeNull()
+    // Local open: #local + in-flight scan/load (cancelInFlight is the stop/setVolume guard).
+    fireEvent.change(input!, { target: { files } })
+    mocks.cancelInFlight.mockClear()
+    mocks.setVolume.mockClear()
+
+    act(() => {
+      // Empty hash / no #series — same branch as Browser Back to the library entry.
+      window.history.replaceState(
+        { screen: 'library' },
+        '',
+        `${window.location.pathname}${window.location.search}`,
+      )
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    expect(mocks.cancelInFlight).toHaveBeenCalledTimes(1)
+    // cancelInFlight is what drops worker volume-ready; with the mock, no late setVolume.
+    expect(mocks.setVolume).not.toHaveBeenCalled()
+  })
 })
 
 describe('auto-recommend does not load on library (AC-3)', () => {

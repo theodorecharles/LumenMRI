@@ -318,9 +318,12 @@ export function useViewerSession() {
       }
       const match = window.location.hash.match(/^#series\/(.+)$/)
       if (!match) {
-        // Browser Back to library while a bundled open is in flight.
+        // Browser Back to library while a bundled open or local scan/load is in flight.
         clearAnnotationStash(annotationStashRef.current)
         cancelPendingOpen()
+        // Match goHome: drop in-flight scan/load so volume-ready cannot setVolume after
+        // the screen is library (AC-1, AC-2).
+        cancelInFlight()
         clearCompare()
         setScreen('library')
         return
