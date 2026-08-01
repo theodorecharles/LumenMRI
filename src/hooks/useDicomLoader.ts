@@ -24,10 +24,13 @@ export function useDicomLoader() {
   const pendingOnVolumeRef = useRef<((volume: VolumeData) => void) | null>(null)
   // When false, drop worker volume/progress/error posts (external setVolume / cancel won the race).
   const acceptWorkerResultsRef = useRef(true)
+  /** Latest primary volume for cancelInFlight progress reset without stale closure. */
+  const volumeRef = useRef<VolumeData | null>(null)
   const [series, setSeries] = useState<SeriesSummary[]>([])
   const [volume, setVolume] = useState<VolumeData | null>(null)
   const [progress, setProgress] = useState<ScanProgress>(IDLE_PROGRESS)
   const [error, setError] = useState<string | null>(null)
+  volumeRef.current = volume
 
   useEffect(() => {
     const dicomWorker = new Worker(new URL('../workers/dicom.worker.ts', import.meta.url), {
@@ -91,10 +94,17 @@ export function useDicomLoader() {
 
   // Drop in-flight worker posts and stop the worker job without clearing indexed series.
   // Also clear pendingOnVolume so a cancelled compare load cannot stick UI busy forever.
+  // Reset progress so sticky scanning/loading (workerBusy) clears — library popstate / goHome
+  // via cancelInFlight (AC-3); keep ready when a primary volume is still shown.
   const cancelInFlight = useCallback(() => {
     acceptWorkerResultsRef.current = false
     pendingOnVolumeRef.current = null
     send({ type: 'cancel' })
+    setProgress(
+      volumeRef.current
+        ? { phase: 'ready', progress: 1, label: 'GPU volume ready' }
+        : IDLE_PROGRESS,
+    )
   }, [send])
 
   // Bundled / demo paths set volume outside the worker. Always clear sticky error
