@@ -89,6 +89,7 @@ export default function App() {
     inputRef,
     primarySliceIndexRef,
     primarySettingsRef,
+    annotationStash,
     screen,
     catalog,
     catalogLoading,
@@ -919,6 +920,7 @@ export default function App() {
                         hideCropControls
                         viewTransform={sliceViewA}
                         onViewTransformChange={handleSliceViewA}
+                        annotationStash={annotationStash}
                       />
                       {compareVolume ? (
                         <SliceViewer
@@ -940,6 +942,7 @@ export default function App() {
                           viewTransform={sliceViewB}
                           onViewTransformChange={handleSliceViewB}
                           resetControlledViewOnVolumeChange={!viewLinked}
+                          annotationStash={annotationStash}
                         />
                       ) : (
                         <div className="compare-empty-pane" role="status">
@@ -1045,6 +1048,7 @@ export default function App() {
                           slicePlane={slicePlane}
                           acquiredPlane={acquiredPlane}
                           onSlicePlaneChange={changeSlicePlane}
+                          annotationStash={annotationStash}
                         />
                       ) : null}
                     </>

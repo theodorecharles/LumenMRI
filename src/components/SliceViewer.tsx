@@ -15,6 +15,13 @@ import {
   SquareDashed,
   Trash2,
 } from 'lucide-react'
+import {
+  annotationStashGeneration,
+  hopSeriesAnnotations,
+  maxAnnotationId,
+  stashSeriesAnnotations,
+  type AnnotationStash,
+} from '../lib/annotationStash'
 import { isTextEntryTarget } from '../lib/keyboardShortcuts'
 import { rulerLengthMillimeters } from '../lib/mpr'
 import {
@@ -90,6 +97,11 @@ interface SliceViewerProps {
   slicePlane?: AnatomicalPlane
   acquiredPlane?: AnatomicalPlane
   onSlicePlaneChange?: (plane: AnatomicalPlane) => void
+  /**
+   * Session stash of 2D marks keyed by seriesId. Owned by the viewer session so
+   * series-card clicks, Compare B hops, and layout remounts share one Map.
+   */
+  annotationStash: AnnotationStash
 }
 
 interface CanvasRect {
@@ -284,6 +296,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     slicePlane,
     acquiredPlane,
     onSlicePlaneChange,
+    annotationStash,
   }, forwardedRef) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const viewportRef = useRef<HTMLDivElement>(null)
@@ -294,6 +307,15 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const annotationFlashTokenRef = useRef(0)
     const angleBuildRef = useRef<AngleBuild | null>(null)
     const sliceIndexRef = useRef(sliceIndex)
+    /** Shared session Map — series-card / Compare B hops must not clear it. */
+    const annotationStashRef = useRef(annotationStash)
+    annotationStashRef.current = annotationStash
+    /** Generation of the session that owns the currently displayed annotations. */
+    const annotationStashGenerationRef = useRef(annotationStashGeneration(annotationStash))
+    /** null until first series effect — distinguishes mount rehydrate from live hop. */
+    const seriesIdRef = useRef<string | null>(null)
+    const measurementsRef = useRef<Measurement[]>([])
+    const pinnedProbesRef = useRef<PinnedProbe[]>([])
     const viewRef = useRef<ViewTransform>(FIT_VIEW)
     const [canvasRect, setCanvasRect] = useState<CanvasRect | null>(null)
     const [localView, setLocalView] = useState<ViewTransform>(FIT_VIEW)
@@ -320,6 +342,8 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       sample: PixelProbeSample
     } | null>(null)
     const [pinnedProbes, setPinnedProbes] = useState<PinnedProbe[]>([])
+    measurementsRef.current = measurements
+    pinnedProbesRef.current = pinnedProbes
     const [windowLevelDrag, setWindowLevelDrag] = useState<{ window: number; level: number } | null>(null)
     const [cinePlaying, setCinePlaying] = useState(false)
     const [cineFps, setCineFps] = useState<CineFps>(10)
@@ -483,12 +507,36 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     }, [height, width])
 
     useEffect(() => {
-      setMeasurements([])
+      const previousSeriesId = seriesIdRef.current
+      const nextSeriesId = volume.seriesId
+      const currentStashGeneration = annotationStashGeneration(annotationStashRef.current)
+
+      // Series-card / Compare B hop (or mount remount): stash+restore only — never clear.
+      if (previousSeriesId !== nextSeriesId) {
+        const restored = hopSeriesAnnotations(
+          annotationStashRef.current,
+          previousSeriesId,
+          nextSeriesId,
+          {
+            measurements: measurementsRef.current,
+            pinnedProbes: pinnedProbesRef.current,
+          },
+          annotationStashGenerationRef.current,
+        )
+        setMeasurements(restored.measurements as Measurement[])
+        setPinnedProbes(restored.pinnedProbes as PinnedProbe[])
+        const highId = maxAnnotationId(restored)
+        if (highId > measurementIdRef.current) measurementIdRef.current = highId
+        if (highId > probeIdRef.current) probeIdRef.current = highId
+        seriesIdRef.current = nextSeriesId
+      }
+      annotationStashGenerationRef.current = currentStashGeneration
+
+      // In-progress tools never carry across series; completed marks come from the stash.
       setMeasurementDraft(null)
       setMeasurementTool(null)
       setProbeTool(false)
       setProbeHover(null)
-      setPinnedProbes([])
       setAnnotationFlash(null)
       angleBuildRef.current = null
       interactionRef.current = null
@@ -499,6 +547,22 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       }
       setPanning(false)
     }, [volume.seriesId])
+
+    // Persist on ordinary remounts; a session-boundary generation change suppresses stale writes.
+    useEffect(() => {
+      return () => {
+        const activeId = seriesIdRef.current
+        if (!activeId) return
+        if (
+          annotationStashGenerationRef.current
+          !== annotationStashGeneration(annotationStashRef.current)
+        ) return
+        stashSeriesAnnotations(annotationStashRef.current, activeId, {
+          measurements: measurementsRef.current,
+          pinnedProbes: pinnedProbesRef.current,
+        })
+      }
+    }, [])
 
     useEffect(() => {
       if (!annotationFlash) return
