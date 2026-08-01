@@ -52,3 +52,7 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+        env:
+          # deploy-pages@v5 still bundles a punycode caller. Suppress only that
+          # upstream Node warning; all other process warnings remain visible.
+          NODE_OPTIONS: --disable-warning=DEP0040
