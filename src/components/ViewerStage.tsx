@@ -579,6 +579,9 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
     const autoRotateRef = useRef(autoRotate)
     const cropHandleRefs = useRef<Record<string, HTMLButtonElement | null>>({})
     const cropDragRef = useRef<CropDrag | null>(null)
+    /** Latest crop bounds including in-flight drag writes (ahead of React props under load). */
+    const cropBoundsRef = useRef(cropBounds)
+    cropBoundsRef.current = cropBounds
     const slicePickEnabledRef = useRef(slicePickEnabled)
     const cropEditingRef = useRef(cropEditing)
     const onSlicePickRef = useRef(onSlicePick)
@@ -671,7 +674,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         screenAxisX: screenX / projectedLength,
         screenAxisY: screenY / projectedLength,
         pixelsPerFraction,
-        bounds: { ...cropBounds },
+        bounds: { ...cropBoundsRef.current },
       }
       if (containerRef.current) containerRef.current.dataset.cropDragMode = 'face'
       runtime.controls.enabled = false
@@ -704,7 +707,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         pointerId: event.pointerId,
         plane,
         startWorld,
-        bounds: { ...cropBounds },
+        bounds: { ...cropBoundsRef.current },
       }
       if (containerRef.current) {
         containerRef.current.dataset.cropDragMode = 'move'
@@ -714,6 +717,20 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       event.currentTarget.setPointerCapture(event.pointerId)
       event.preventDefault()
       event.stopPropagation()
+    }
+
+    /** Publish bounds on the canvas immediately — do not wait for React → useEffect. */
+    const writeCropBoundsAttr = (bounds: CropBounds) => {
+      cropBoundsRef.current = bounds
+      if (!containerRef.current) return
+      containerRef.current.dataset.cropBounds = [
+        bounds.minX,
+        bounds.maxX,
+        bounds.minY,
+        bounds.maxY,
+        bounds.minZ,
+        bounds.maxZ,
+      ].map((value) => value.toFixed(4)).join(',')
     }
 
     const updateCropDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -742,18 +759,21 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
         const deltaX = clamp(requestedX, -drag.bounds.minX, 1 - drag.bounds.maxX)
         const deltaY = clamp(requestedY, -drag.bounds.minY, 1 - drag.bounds.maxY)
         const deltaZ = clamp(requestedZ, -drag.bounds.minZ, 1 - drag.bounds.maxZ)
-        if (containerRef.current) {
-          containerRef.current.dataset.cropMoveDelta = [deltaX, deltaY, deltaZ]
-            .map((value) => value.toFixed(4)).join(',')
-        }
-        onCropChange({
+        const next = {
           minX: drag.bounds.minX + deltaX,
           maxX: drag.bounds.maxX + deltaX,
           minY: drag.bounds.minY + deltaY,
           maxY: drag.bounds.maxY + deltaY,
           minZ: drag.bounds.minZ + deltaZ,
           maxZ: drag.bounds.maxZ + deltaZ,
-        })
+        }
+        if (containerRef.current) {
+          containerRef.current.dataset.cropMoveDelta = [deltaX, deltaY, deltaZ]
+            .map((value) => value.toFixed(4)).join(',')
+        }
+        // Sync attribute before setState so e2e polls see the drag result under CI load.
+        writeCropBoundsAttr(next)
+        onCropChange(next)
         event.preventDefault()
         event.stopPropagation()
         return
@@ -773,6 +793,7 @@ export const ViewerStage = forwardRef<ViewerStageHandle, ViewerStageProps>(
       else if (drag.bound === 'minZ') next.minZ = clamp(drag.bounds.minZ + fractionDelta, 0, drag.bounds.maxZ - minimum)
       else next.maxZ = clamp(drag.bounds.maxZ + fractionDelta, drag.bounds.minZ + minimum, 1)
 
+      writeCropBoundsAttr(next)
       onCropChange(next)
       event.preventDefault()
       event.stopPropagation()

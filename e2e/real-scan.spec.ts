@@ -193,13 +193,19 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
     { steps: 8 },
   )
   await page.mouse.up()
-  const beforeMove = (await page.locator('.viewer-canvas').getAttribute('data-crop-bounds'))
-    ?.split(',').map(Number) || []
-  expect(beforeMove[1]).toBeLessThan(0.95)
+  // Face-drag commits flow through React setState → useEffect → data-crop-bounds.
+  // Under CI load the last pointermove can still be in flight when mouse.up returns, so
+  // sample the pre-move box only after the drag idles and projected handles settle —
+  // otherwise width-preservation compares a mid-drag snapshot to the final moved box
+  // (deploy run 30678055433: 0.8504 vs 0.829).
+  await expect(page.locator('.viewer-canvas')).toHaveAttribute('data-crop-drag-mode', 'idle')
   const moveHandle = page.getByRole('button', { name: 'Move entire crop box' })
   const translatedLeft = await settledHandleCenter(page, leftCropHandle)
   const translatedRight = await settledHandleCenter(page, rightCropHandle)
   const move = await settledHandleCenter(page, moveHandle)
+  const beforeMove = (await page.locator('.viewer-canvas').getAttribute('data-crop-bounds'))
+    ?.split(',').map(Number) || []
+  expect(beforeMove[1]).toBeLessThan(0.95)
   const axisX = translatedRight.x - translatedLeft.x
   const axisY = translatedRight.y - translatedLeft.y
   await page.mouse.move(move.x, move.y)
@@ -212,6 +218,7 @@ test('opens the complete scan library and links 2D and 3D views', async ({ page 
     return delta[0]
   }).toBeGreaterThan(0.01)
   await page.mouse.up()
+  await expect(page.locator('.viewer-canvas')).toHaveAttribute('data-crop-drag-mode', 'idle')
   await expect.poll(async () => {
     const bounds = (await page.locator('.viewer-canvas').getAttribute('data-crop-bounds'))
       ?.split(',').map(Number) || []
