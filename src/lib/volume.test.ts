@@ -5,7 +5,9 @@ import {
   mapRelativeSliceIndex,
   midSliceIndex,
   normalizePhysicalSize,
+  remapSliceIndexForMprDepthChange,
   sliceIndexFromStackFraction,
+  sliceIndexForVolumeChange,
   volumeLocalToImageCoords,
 } from './volume'
 import {
@@ -41,6 +43,57 @@ describe('volume utilities', () => {
     expect(midSliceIndex(21)).toBe(10)
     expect(midSliceIndex(1)).toBe(0)
     expect(midSliceIndex(0)).toBe(0)
+  })
+
+  it('does not map a non-acquired MPR index through acquired depth on a series hop', () => {
+    // Coronal index 256 is outside the prior 38-slice acquired stack. Mapping it
+    // as acquired would clamp to the end and open the new 30-slice series at 29.
+    expect(sliceIndexForVolumeChange(256, 38, 30, false)).toBe(14)
+    expect(sliceIndexForVolumeChange(256, 38, 30, null)).toBe(14)
+  })
+
+  it('preserves relative position when the prior index is acquired-stack based', () => {
+    expect(sliceIndexForVolumeChange(10, 41, 21, true)).toBe(5)
+    expect(sliceIndexForVolumeChange(40, 41, 21, true)).toBe(20)
+  })
+
+  it('remaps MPR slice index when reformat stack depth changes on the same non-acquired plane', () => {
+    // Coronal of axial: stack depth = source rows. Downsample 1024 → 512 (shoulder COR T2 class).
+    expect(remapSliceIndexForMprDepthChange(512, 1024, 512, {
+      planeChanged: false,
+      slicePlaneIsAcquired: false,
+    })).toBe(256)
+    expect(remapSliceIndexForMprDepthChange(0, 1024, 512, {
+      planeChanged: false,
+      slicePlaneIsAcquired: false,
+    })).toBe(0)
+    expect(remapSliceIndexForMprDepthChange(1023, 1024, 512, {
+      planeChanged: false,
+      slicePlaneIsAcquired: false,
+    })).toBe(511)
+    // Acquired plane, plane switch, or series hop: leave index alone (other effects own those).
+    expect(remapSliceIndexForMprDepthChange(400, 1024, 512, {
+      planeChanged: false,
+      slicePlaneIsAcquired: true,
+    })).toBe(400)
+    expect(remapSliceIndexForMprDepthChange(400, 1024, 512, {
+      planeChanged: true,
+      slicePlaneIsAcquired: false,
+    })).toBe(400)
+    expect(remapSliceIndexForMprDepthChange(400, 1024, 512, {
+      planeChanged: false,
+      slicePlaneIsAcquired: false,
+      seriesChanged: true,
+    })).toBe(400)
+    // No prior depth / same depth: no-op.
+    expect(remapSliceIndexForMprDepthChange(100, null, 512, {
+      planeChanged: false,
+      slicePlaneIsAcquired: false,
+    })).toBe(100)
+    expect(remapSliceIndexForMprDepthChange(100, 512, 512, {
+      planeChanged: false,
+      slicePlaneIsAcquired: false,
+    })).toBe(100)
   })
 
   it('maps stack fraction to slice index for 3D→2D pick', () => {

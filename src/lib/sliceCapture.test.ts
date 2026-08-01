@@ -265,6 +265,60 @@ describe('compositeAnnotatedSlicePng', () => {
     expect(result).toBe('data:image/png;base64,SOURCE')
     createElement.mockRestore()
   })
+
+  it('metadata strip stores series/SL/W·L only — no invert I on/off field (AC-3)', () => {
+    const { ctx, calls } = mockContext()
+    const createElement = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      if (tag !== 'canvas') return document.createElementNS('http://www.w3.org/1999/xhtml', tag)
+      const canvas = {
+        width: 0,
+        height: 0,
+        getContext: () => ctx,
+        toDataURL: () => 'data:image/png;base64,NOINVERT',
+      }
+      return canvas as unknown as HTMLCanvasElement
+    })
+
+    const source = mockSource()
+    // Capture input has no invert key; strip must not invent an I on/off line.
+    const input = {
+      source,
+      seriesName: 'Ax FLAIR',
+      sliceIndex: 4,
+      sliceCount: 32,
+      window: 1,
+      level: 0.5,
+      labels: { top: 'A', right: 'L', bottom: 'P', left: 'R' },
+      measurements: [],
+    }
+    expect('invert' in input).toBe(false)
+    expect('invertDisplay' in input).toBe(false)
+
+    const result = compositeAnnotatedSlicePng(input)
+    expect(result).toBe('data:image/png;base64,NOINVERT')
+
+    const texts = calls
+      .filter((call) => call.method === 'fillText')
+      .map((call) => String(call.args[0]))
+
+    // Canonical strip fields from drawMetadataStrip.
+    expect(texts).toContain('Ax FLAIR')
+    expect(texts.some((t) => t.includes('SL 005') && t.includes('032'))).toBe(true)
+    expect(texts.some((t) => /W\s+255\s*·\s*L\s+128/.test(t))).toBe(true)
+
+    // No invert polarity stored as I on/off (or similar) on the strip.
+    const invertLike = texts.filter(
+      (t) =>
+        /\binvert\b/i.test(t) ||
+        /\bI\s*on\b/i.test(t) ||
+        /\bI\s*off\b/i.test(t) ||
+        /\bI\s*:\s*(on|off)\b/i.test(t) ||
+        /^I\s+(on|off)$/i.test(t.trim()),
+    )
+    expect(invertLike).toEqual([])
+
+    createElement.mockRestore()
+  })
 })
 
 describe('renderAnnotatedSliceCanvas', () => {

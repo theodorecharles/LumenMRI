@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import {
   ChevronDown,
   ChevronUp,
+  Contrast,
   Crop,
   Crosshair,
   DraftingCompass,
@@ -21,8 +22,14 @@ import {
   stashSeriesAnnotations,
   type AnnotationStash,
 } from '../lib/annotationStash'
+import { isTextEntryTarget } from '../lib/keyboardShortcuts'
 import { rulerLengthMillimeters } from '../lib/mpr'
-import { formatProbeScalar, samplePixelAt, type PixelProbeSample } from '../lib/pixelProbe'
+import {
+  formatProbeScalar,
+  mapIntensityToDisplayGray,
+  samplePixelAt,
+  type PixelProbeSample,
+} from '../lib/pixelProbe'
 import { computeRoiStats, formatRoiSummary } from '../lib/roiStats'
 import { exportCapturePng, renderAnnotatedSliceCanvas, type CaptureExportResult } from '../lib/sliceCapture'
 import { FIT_VIEW, MIN_VIEW_SCALE, zoomAboutPoint, type ViewTransform } from '../lib/sliceView'
@@ -91,8 +98,8 @@ interface SliceViewerProps {
   acquiredPlane?: AnatomicalPlane
   onSlicePlaneChange?: (plane: AnatomicalPlane) => void
   /**
-   * Session stash of 2D marks keyed by seriesId. Owned by App so series-card
-   * clicks, Compare B hops, and layout remounts share one Map and never drop it.
+   * Session stash of 2D marks keyed by seriesId. Owned by the viewer session so
+   * series-card clicks, Compare B hops, and layout remounts share one Map.
    */
   annotationStash: AnnotationStash
 }
@@ -300,7 +307,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const annotationFlashTokenRef = useRef(0)
     const angleBuildRef = useRef<AngleBuild | null>(null)
     const sliceIndexRef = useRef(sliceIndex)
-    /** Shared session Map from App — series-card / Compare B hops must not clear it. */
+    /** Shared session Map — series-card / Compare B hops must not clear it. */
     const annotationStashRef = useRef(annotationStash)
     annotationStashRef.current = annotationStash
     /** Generation of the session that owns the currently displayed annotations. */
@@ -325,6 +332,8 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const [panning, setPanning] = useState(false)
     const [measurementTool, setMeasurementTool] = useState<MeasurementTool | null>(null)
     const [probeTool, setProbeTool] = useState(false)
+    /** Pane-local display polarity; never written into volume data or capture metadata. */
+    const [invertDisplay, setInvertDisplay] = useState(false)
     const [measurements, setMeasurements] = useState<Measurement[]>([])
     const [measurementDraft, setMeasurementDraft] = useState<Measurement | null>(null)
     const [probeHover, setProbeHover] = useState<{
@@ -451,13 +460,14 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       canvas.height = height
       const image = context.createImageData(width, height)
       const sliceOffset = safeIndex * width * height
-      const windowLow = (volumeSettings.level - volumeSettings.window * 0.5) * 255
-      const windowWidth = Math.max(4, volumeSettings.window * 255)
+      const { window, level } = volumeSettings
 
       for (let pixel = 0; pixel < width * height; pixel += 1) {
-        const value = Math.max(
-          0,
-          Math.min(255, ((volume.data[sliceOffset + pixel] - windowLow) / windowWidth) * 255),
+        const value = mapIntensityToDisplayGray(
+          volume.data[sliceOffset + pixel] ?? 0,
+          window,
+          level,
+          invertDisplay,
         )
         const target = pixel * 4
         image.data[target] = value
@@ -466,7 +476,15 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         image.data[target + 3] = 255
       }
       context.putImageData(image, 0, 0)
-    }, [height, safeIndex, volume.data, volumeSettings.level, volumeSettings.window, width])
+    }, [
+      height,
+      invertDisplay,
+      safeIndex,
+      volume.data,
+      volumeSettings.level,
+      volumeSettings.window,
+      width,
+    ])
 
     useEffect(() => {
       const canvas = canvasRef.current
@@ -556,6 +574,27 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       return () => window.clearTimeout(timer)
     }, [annotationFlash])
 
+    // AC-2: Delete / Backspace removes only the selected inventory mark (flash selection).
+    useEffect(() => {
+      if (!annotationFlash) return
+      const { kind, id, token } = annotationFlash
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key !== 'Delete' && event.key !== 'Backspace') return
+        if (event.metaKey || event.ctrlKey || event.altKey) return
+        if (isTextEntryTarget(event.target)) return
+        event.preventDefault()
+        if (kind === 'measurement') {
+          setMeasurements((current) => current.filter((measurement) => measurement.id !== id))
+        } else {
+          setPinnedProbes((current) => current.filter((probe) => probe.id !== id))
+        }
+        setAnnotationFlash(null)
+        setActivePickFlash((current) => (current?.token === token ? null : current))
+      }
+      window.addEventListener('keydown', onKeyDown)
+      return () => window.removeEventListener('keydown', onKeyDown)
+    }, [annotationFlash])
+
     useEffect(() => {
       setCinePlaying(false)
     }, [viewerLayout])
@@ -571,7 +610,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       if (interactionRef.current?.type === 'measurement') interactionRef.current = null
     }, [safeIndex])
 
-    // Keep live probe display gray in sync when W/L sliders change under a parked cursor.
+    // Keep live probe display gray in sync when W/L or invert changes under a parked cursor.
     useEffect(() => {
       setProbeHover((current) => {
         if (!current) return null
@@ -582,11 +621,12 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
           current.y,
           volumeSettings.window,
           volumeSettings.level,
+          invertDisplay,
         )
         if (!sample) return null
         return { x: current.x, y: current.y, sample }
       })
-    }, [safeIndex, volume, volumeSettings.level, volumeSettings.window])
+    }, [safeIndex, volume, volumeSettings.level, volumeSettings.window, invertDisplay])
 
     useEffect(() => {
       if (!cinePlaying || depth <= 1) return
@@ -660,6 +700,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         point.y,
         volumeSettings.window,
         volumeSettings.level,
+        invertDisplay,
       )
       if (!sample) return null
       probeIdRef.current += 1
@@ -690,6 +731,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         point.y,
         volumeSettings.window,
         volumeSettings.level,
+        invertDisplay,
       )
       if (!sample) {
         setProbeHover(null)
@@ -968,6 +1010,10 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       if (next) onCropEditingChange(false)
     }
 
+    const toggleInvertDisplay = () => {
+      setInvertDisplay((current) => !current)
+    }
+
     const toggleProbeTool = () => {
       const next = !probeTool
       setProbeTool(next)
@@ -1040,6 +1086,22 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       setAnnotationFlash(null)
     }
 
+    /** Remove a single inventory mark without touching others on the slice or series. */
+    const removeAnnotation = (item: AnnotationInventoryItem) => {
+      if (item.kind === 'measurement') {
+        setMeasurements((current) => current.filter((measurement) => measurement.id !== item.id))
+      } else {
+        setPinnedProbes((current) => current.filter((probe) => probe.id !== item.id))
+      }
+      const selectedFlash = annotationFlash
+      if (selectedFlash && selectedFlash.kind === item.kind && selectedFlash.id === item.id) {
+        setAnnotationFlash(null)
+        setActivePickFlash((current) => (
+          current?.token === selectedFlash.token ? null : current
+        ))
+      }
+    }
+
     const jumpToAnnotation = (item: AnnotationInventoryItem) => {
       setCinePlaying(false)
       onSliceChange(Math.max(0, Math.min(depth - 1, item.slice)))
@@ -1081,6 +1143,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         data-view-transform={`${view.scale},${view.x},${view.y}`}
         data-window={volumeSettings.window}
         data-level={volumeSettings.level}
+        data-invert={invertDisplay ? 'true' : 'false'}
         data-slice-plane={slicePlane}
         onWheel={handleWheel}
       >
@@ -1359,21 +1422,42 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                       (item.kind === 'measurement' && isFlashingMeasurement(item.id))
                       || (item.kind === 'probe' && isFlashingProbe(item.id))
                     )
+                    const toolLabel = TOOL_LABELS[item.tool]
                     return (
-                      <li key={item.key}>
+                      <li
+                        key={item.key}
+                        className={`annotation-inventory-row tool-${item.tool}${onCurrentSlice ? ' on-slice' : ''}${selected ? ' selected' : ''}`}
+                      >
                         <button
                           type="button"
-                          className={`annotation-inventory-row tool-${item.tool}${onCurrentSlice ? ' on-slice' : ''}${selected ? ' selected' : ''}`}
+                          className={`annotation-inventory-jump${selected ? ' selected' : ''}`}
                           data-testid="annotation-inventory-row"
                           data-slice={item.slice}
                           aria-current={onCurrentSlice ? 'true' : undefined}
-                          aria-label={`${TOOL_LABELS[item.tool]}, ${item.summary}, slice ${item.slice + 1}`}
+                          aria-label={`${toolLabel}, ${item.summary}, slice ${item.slice + 1}`}
                           title={`Jump to slice ${item.slice + 1}`}
                           onClick={() => jumpToAnnotation(item)}
+                          onKeyDown={(event) => {
+                            if (event.key !== 'Delete' && event.key !== 'Backspace') return
+                            if (event.metaKey || event.ctrlKey || event.altKey) return
+                            event.preventDefault()
+                            event.stopPropagation()
+                            removeAnnotation(item)
+                          }}
                         >
-                          <span className="annotation-inventory-tool">{TOOL_LABELS[item.tool]}</span>
+                          <span className="annotation-inventory-tool">{toolLabel}</span>
                           <span className="annotation-inventory-summary">{item.summary}</span>
                           <span className="annotation-inventory-slice">SL {String(item.slice + 1).padStart(3, '0')}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="annotation-inventory-delete"
+                          data-testid="annotation-inventory-delete"
+                          aria-label={`Delete ${toolLabel} on slice ${item.slice + 1}`}
+                          title={`Delete this ${toolLabel.toLowerCase()}`}
+                          onClick={() => removeAnnotation(item)}
+                        >
+                          <Trash2 size={11} aria-hidden="true" />
                         </button>
                       </li>
                     )
@@ -1422,6 +1506,17 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                 onClick={toggleProbeTool}
               >
                 <Crosshair size={14} /><span>Probe</span>
+              </button>
+              <button
+                type="button"
+                className={invertDisplay ? 'active invert-active' : ''}
+                aria-label="Invert grayscale"
+                aria-pressed={invertDisplay}
+                title="Invert grayscale polarity (display only)"
+                data-testid="invert-tool"
+                onClick={toggleInvertDisplay}
+              >
+                <Contrast size={14} /><span>Invert</span>
               </button>
               <button
                 type="button"

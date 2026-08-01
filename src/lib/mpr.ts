@@ -98,6 +98,42 @@ export function sourcePointToPlane(
 }
 
 /**
+ * Inverse of `sourcePointToPlane`: recover acquired image-space fractions from
+ * an active-plane x/y/stack triple. Same axis permutation and flips as reslice.
+ */
+export function planePointToSource(
+  planePoint: PlanePoint,
+  acquiredPlane: AnatomicalPlane,
+  sourcePlane: AnatomicalPlane,
+): Vec3Tuple {
+  const axes = sourceAxesForPlane(acquiredPlane, sourcePlane)
+  const flips = sourceAxisFlipsForPlane(acquiredPlane, sourcePlane)
+  const planeValues: Vec3Tuple = [planePoint.x, planePoint.y, planePoint.stackFraction]
+  const sourcePoint: Vec3Tuple = [0, 0, 0]
+  for (let targetAxis = 0; targetAxis < 3; targetAxis += 1) {
+    const value = planeValues[targetAxis]
+    sourcePoint[axes[targetAxis]] = flips[targetAxis] ? 1 - value : value
+  }
+  return sourcePoint
+}
+
+/**
+ * Map a locus from one diagnostic plane into another via acquired space.
+ * Reuses sourcePointToPlane and its inverse so AX/COR/SAG switches share the
+ * Alt+click / reslice geometry path.
+ */
+export function mapPlaneLocusToPlane(
+  planePoint: PlanePoint,
+  acquiredPlane: AnatomicalPlane,
+  fromPlane: AnatomicalPlane,
+  toPlane: AnatomicalPlane,
+): PlanePoint {
+  if (fromPlane === toPlane) return planePoint
+  const sourcePoint = planePointToSource(planePoint, acquiredPlane, fromPlane)
+  return sourcePointToPlane(sourcePoint, acquiredPlane, toPlane)
+}
+
+/**
  * Reindex an acquired orthogonal volume into one active diagnostic plane.
  * Intensities are copied exactly; dimensions, spacing, and physical size follow
  * the same axis permutation so all existing 2D tools remain physically correct.

@@ -32,6 +32,10 @@ export interface CaptureOrientationLabels {
   left: string
 }
 
+/**
+ * Annotated 2D capture inputs. Window/level are stored on the metadata strip;
+ * pane-local invert is display-only and must not appear as an I on/off field.
+ */
 export interface AnnotatedSliceCaptureInput {
   source: HTMLCanvasElement
   seriesName: string
@@ -271,7 +275,8 @@ function drawMetadataStrip(
   input: AnnotatedSliceCaptureInput,
   scale: number,
 ) {
-  // Thin corner strip: series name, slice index, W/L.
+  // Thin corner strip: series name, slice index, W/L only.
+  // Invert is display-pipeline state and is intentionally not a stored I on/off field.
   drawMetadataLines(
     ctx,
     [
