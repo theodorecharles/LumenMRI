@@ -24,7 +24,7 @@ function workerBusy(phase: string) {
   return phase === 'scanning' || phase === 'loading'
 }
 
-describe('useDicomLoader cancelInFlight progress reset', () => {
+describe('useDicomLoader cancelInFlight clears sticky progress', () => {
   let listeners: WorkerListener[]
   let posted: WorkerRequest[]
 
@@ -57,7 +57,7 @@ describe('useDicomLoader cancelInFlight progress reset', () => {
     }
   }
 
-  it('AC-1/AC-2: cancel during scan sets idle so workerBusy is false', () => {
+  it('cancel during scan sets idle so workerBusy is false', () => {
     const { result } = renderHook(() => useDicomLoader())
 
     act(() => {
@@ -75,7 +75,7 @@ describe('useDicomLoader cancelInFlight progress reset', () => {
     expect(result.current.progress.label).toBe('Ready')
     expect(workerBusy(result.current.progress.phase)).toBe(false)
 
-    // Stale worker posts must not re-freeze progress after cancel.
+    // Stale worker posts must not re-stick scanning/loading after cancel.
     act(() => {
       emit({ type: 'scan-progress', progress: 0.5, label: 'Still scanning' })
       emit({ type: 'load-progress', progress: 0.2, label: 'Preparing volume' })
@@ -84,7 +84,7 @@ describe('useDicomLoader cancelInFlight progress reset', () => {
     expect(workerBusy(result.current.progress.phase)).toBe(false)
   })
 
-  it('AC-1/AC-2: cancel during load-series with volume shown sets ready so workerBusy is false', () => {
+  it('cancel during load-series with volume shown sets ready so workerBusy is false', () => {
     const { result } = renderHook(() => useDicomLoader())
     const volume = makeVolume()
 
@@ -121,7 +121,7 @@ describe('useDicomLoader cancelInFlight progress reset', () => {
     expect(workerBusy(result.current.progress.phase)).toBe(false)
   })
 
-  it('AC-1: cancel during load-series with no volume sets idle', () => {
+  it('cancel during load-series with no volume sets idle', () => {
     const { result } = renderHook(() => useDicomLoader())
 
     act(() => {

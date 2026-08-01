@@ -94,7 +94,8 @@ export function useDicomLoader() {
 
   // Drop in-flight worker posts and stop the worker job without clearing indexed series.
   // Also clear pendingOnVolume so a cancelled compare load cannot stick UI busy forever.
-  // Reset progress so workerBusy (scanning|loading) clears; keep ready when a volume is shown.
+  // Reset progress so sticky scanning/loading (workerBusy) clears — library popstate / goHome
+  // via cancelInFlight (AC-3); keep ready when a primary volume is still shown.
   const cancelInFlight = useCallback(() => {
     acceptWorkerResultsRef.current = false
     pendingOnVolumeRef.current = null
