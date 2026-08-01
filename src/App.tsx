@@ -35,7 +35,9 @@ import { compositeCompareSlicePng, exportCapturePng, type CaptureExportResult } 
 import {
   mapRelativeSliceIndex,
   midSliceIndex,
+  remapSliceIndexForMprDepthChange,
   sliceIndexFromStackFraction,
+  sliceIndexForVolumeChange,
 } from './lib/volume'
 import type {
   AnatomicalPlane,
@@ -132,6 +134,16 @@ export default function App() {
   const stageRef = useRef<HTMLElement>(null)
   /** Through-plane depth of the last applied volume; null means no prior slice context. */
   const previousDepthRef = useRef<number | null>(null)
+  /** Whether sliceIndex belonged to that volume's acquired stack before it changed. */
+  const previousSlicePlaneWasAcquiredRef = useRef<boolean | null>(null)
+  /**
+   * Active 2D/MPR stack depth + plane + series for remapping sliceIndex when
+   * reformat depth changes without a plane/series switch (recon ready /
+   * Enhanced toggle). Series hop is owned by the volume-change effect.
+   */
+  const previousMprStackDepthRef = useRef<number | null>(null)
+  const previousMprSlicePlaneRef = useRef<AnatomicalPlane | null>(null)
+  const previousMprSeriesIdRef = useRef<string | null>(null)
   const sliceIndexRef = useRef(0)
   const compareSliceIndexRef = useRef(0)
   const reconstruction = useVolumeReconstruction(volume)
@@ -272,17 +284,17 @@ export default function App() {
   useEffect(() => {
     if (!volume) {
       previousDepthRef.current = null
+      previousSlicePlaneWasAcquiredRef.current = null
       return
     }
     setSlicePlane(anatomicalPlaneFromOrientation(volume.orientation))
     const nextDepth = volume.dimensions[2]
-    const previousDepth = previousDepthRef.current
-    let nextSlice: number
-    if (previousDepth != null && previousDepth > 0) {
-      nextSlice = mapRelativeSliceIndex(sliceIndexRef.current, previousDepth, nextDepth)
-    } else {
-      nextSlice = midSliceIndex(nextDepth)
-    }
+    const nextSlice = sliceIndexForVolumeChange(
+      sliceIndexRef.current,
+      previousDepthRef.current,
+      nextDepth,
+      previousSlicePlaneWasAcquiredRef.current,
+    )
     setSliceIndex(nextSlice)
     previousDepthRef.current = nextDepth
     setCropBounds(FULL_CROP)
@@ -295,6 +307,13 @@ export default function App() {
       )
     }
   }, [setCompareSliceIndex, volume])
+
+  // Update after the volume-change effect so a series hop reads the plane state
+  // belonging to the volume that was visible before the hop.
+  useEffect(() => {
+    if (!volume) return
+    previousSlicePlaneWasAcquiredRef.current = slicePlaneIsAcquired
+  }, [slicePlaneIsAcquired, volume])
 
   const setPrimarySliceIndex = useCallback(
     (index: number) => {
@@ -323,6 +342,46 @@ export default function App() {
     },
     [compareVolume, primarySliceVolume, setCompareSliceIndex, slicesLinked],
   )
+
+  // Keep sliceIndex in MPR stack space when reformat depth changes on the same
+  // non-acquired plane (reconstruction ready, Enhanced/Acquired toggle).
+  useEffect(() => {
+    if (!mprVolume || !volume) {
+      previousMprStackDepthRef.current = null
+      previousMprSlicePlaneRef.current = null
+      previousMprSeriesIdRef.current = null
+      return
+    }
+    const nextDepth = mprVolume.dimensions[2]
+    const previousDepth = previousMprStackDepthRef.current
+    const planeChanged =
+      previousMprSlicePlaneRef.current != null
+      && previousMprSlicePlaneRef.current !== slicePlane
+    const seriesChanged =
+      previousMprSeriesIdRef.current != null
+      && previousMprSeriesIdRef.current !== volume.seriesId
+    const nextSlice = remapSliceIndexForMprDepthChange(
+      sliceIndexRef.current,
+      previousDepth,
+      nextDepth,
+      { planeChanged, slicePlaneIsAcquired, seriesChanged },
+    )
+    if (nextSlice !== sliceIndexRef.current) {
+      setSliceIndex(nextSlice)
+      if (slicesLinkedRef.current && compareVolumeRef.current) {
+        setCompareSliceIndex(
+          mapRelativeSliceIndex(
+            nextSlice,
+            nextDepth,
+            compareVolumeRef.current.dimensions[2],
+          ),
+        )
+      }
+    }
+    previousMprStackDepthRef.current = nextDepth
+    previousMprSlicePlaneRef.current = slicePlane
+    previousMprSeriesIdRef.current = volume.seriesId
+  }, [mprVolume, slicePlane, slicePlaneIsAcquired, volume])
 
   useEffect(() => {
     if (
