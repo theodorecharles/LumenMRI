@@ -15,6 +15,7 @@ import {
   SquareDashed,
   Trash2,
 } from 'lucide-react'
+import { isTextEntryTarget } from '../lib/keyboardShortcuts'
 import { rulerLengthMillimeters } from '../lib/mpr'
 import {
   formatProbeScalar,
@@ -509,6 +510,27 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       return () => window.clearTimeout(timer)
     }, [annotationFlash])
 
+    // AC-2: Delete / Backspace removes only the selected inventory mark (flash selection).
+    useEffect(() => {
+      if (!annotationFlash) return
+      const { kind, id, token } = annotationFlash
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key !== 'Delete' && event.key !== 'Backspace') return
+        if (event.metaKey || event.ctrlKey || event.altKey) return
+        if (isTextEntryTarget(event.target)) return
+        event.preventDefault()
+        if (kind === 'measurement') {
+          setMeasurements((current) => current.filter((measurement) => measurement.id !== id))
+        } else {
+          setPinnedProbes((current) => current.filter((probe) => probe.id !== id))
+        }
+        setAnnotationFlash(null)
+        setActivePickFlash((current) => (current?.token === token ? null : current))
+      }
+      window.addEventListener('keydown', onKeyDown)
+      return () => window.removeEventListener('keydown', onKeyDown)
+    }, [annotationFlash])
+
     useEffect(() => {
       setCinePlaying(false)
     }, [viewerLayout])
@@ -1000,6 +1022,22 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       setAnnotationFlash(null)
     }
 
+    /** Remove a single inventory mark without touching others on the slice or series. */
+    const removeAnnotation = (item: AnnotationInventoryItem) => {
+      if (item.kind === 'measurement') {
+        setMeasurements((current) => current.filter((measurement) => measurement.id !== item.id))
+      } else {
+        setPinnedProbes((current) => current.filter((probe) => probe.id !== item.id))
+      }
+      const selectedFlash = annotationFlash
+      if (selectedFlash && selectedFlash.kind === item.kind && selectedFlash.id === item.id) {
+        setAnnotationFlash(null)
+        setActivePickFlash((current) => (
+          current?.token === selectedFlash.token ? null : current
+        ))
+      }
+    }
+
     const jumpToAnnotation = (item: AnnotationInventoryItem) => {
       setCinePlaying(false)
       onSliceChange(Math.max(0, Math.min(depth - 1, item.slice)))
@@ -1320,21 +1358,42 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                       (item.kind === 'measurement' && isFlashingMeasurement(item.id))
                       || (item.kind === 'probe' && isFlashingProbe(item.id))
                     )
+                    const toolLabel = TOOL_LABELS[item.tool]
                     return (
-                      <li key={item.key}>
+                      <li
+                        key={item.key}
+                        className={`annotation-inventory-row tool-${item.tool}${onCurrentSlice ? ' on-slice' : ''}${selected ? ' selected' : ''}`}
+                      >
                         <button
                           type="button"
-                          className={`annotation-inventory-row tool-${item.tool}${onCurrentSlice ? ' on-slice' : ''}${selected ? ' selected' : ''}`}
+                          className={`annotation-inventory-jump${selected ? ' selected' : ''}`}
                           data-testid="annotation-inventory-row"
                           data-slice={item.slice}
                           aria-current={onCurrentSlice ? 'true' : undefined}
-                          aria-label={`${TOOL_LABELS[item.tool]}, ${item.summary}, slice ${item.slice + 1}`}
+                          aria-label={`${toolLabel}, ${item.summary}, slice ${item.slice + 1}`}
                           title={`Jump to slice ${item.slice + 1}`}
                           onClick={() => jumpToAnnotation(item)}
+                          onKeyDown={(event) => {
+                            if (event.key !== 'Delete' && event.key !== 'Backspace') return
+                            if (event.metaKey || event.ctrlKey || event.altKey) return
+                            event.preventDefault()
+                            event.stopPropagation()
+                            removeAnnotation(item)
+                          }}
                         >
-                          <span className="annotation-inventory-tool">{TOOL_LABELS[item.tool]}</span>
+                          <span className="annotation-inventory-tool">{toolLabel}</span>
                           <span className="annotation-inventory-summary">{item.summary}</span>
                           <span className="annotation-inventory-slice">SL {String(item.slice + 1).padStart(3, '0')}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="annotation-inventory-delete"
+                          data-testid="annotation-inventory-delete"
+                          aria-label={`Delete ${toolLabel} on slice ${item.slice + 1}`}
+                          title={`Delete this ${toolLabel.toLowerCase()}`}
+                          onClick={() => removeAnnotation(item)}
+                        >
+                          <Trash2 size={11} aria-hidden="true" />
                         </button>
                       </li>
                     )
