@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  annotationSeriesKey,
   annotationStashGeneration,
   clearAnnotationStash,
   cloneAnnotationSnapshot,
@@ -44,6 +45,140 @@ function sampleSnapshot(overrides?: Partial<SeriesAnnotationSnapshot>): SeriesAn
 }
 
 describe('annotationStash', () => {
+  describe('annotationSeriesKey (ticket #3750 AC-2)', () => {
+    it('strips shape-reconstruction synthetic mode tags only', () => {
+      expect(annotationSeriesKey('base')).toBe('base')
+      expect(annotationSeriesKey('base::shape-reconstruction')).toBe('base')
+      expect(annotationSeriesKey('base::mpr-coronal')).toBe('base::mpr-coronal')
+      expect(annotationSeriesKey('base::shape-reconstruction::mpr-coronal')).toBe(
+        'base::mpr-coronal',
+      )
+      expect(annotationSeriesKey('base::shape-reconstruction::mpr-sagittal')).toBe(
+        'base::mpr-sagittal',
+      )
+    })
+
+    it('treats Enhanced on/off and recon-ready ids as the same hop key on a fixed plane', () => {
+      const acquiredOff = annotationSeriesKey('series-a::mpr-coronal')
+      const enhancedOn = annotationSeriesKey('series-a::shape-reconstruction::mpr-coronal')
+      const enhancedOnly = annotationSeriesKey('series-a::shape-reconstruction')
+      expect(acquiredOff).toBe(enhancedOn)
+      expect(enhancedOnly).toBe('series-a')
+      // Real series hop still differs.
+      expect(annotationSeriesKey('series-b::mpr-coronal')).not.toBe(acquiredOff)
+      // Plane change still differs.
+      expect(annotationSeriesKey('series-a::mpr-sagittal')).not.toBe(acquiredOff)
+    })
+
+    it('hopSeriesAnnotations no-ops when previous and next share the same annotation key', () => {
+      const stash = createAnnotationStash()
+      const marks = sampleSnapshot()
+      const key = annotationSeriesKey('series-a::mpr-coronal')
+      // Simulated synthetic flip: same hop key, marks must stay live (no stash rewrite to empty).
+      const sameKeyRestored = hopSeriesAnnotations(stash, key, key, marks)
+      expect(sameKeyRestored).toEqual(marks)
+      expect(stash.size).toBe(0)
+    })
+
+    it('hopSeriesAnnotations still stashes on a real underlying series change', () => {
+      const stash = createAnnotationStash()
+      const marks = sampleSnapshot()
+      const from = annotationSeriesKey('series-a::shape-reconstruction::mpr-coronal')
+      const to = annotationSeriesKey('series-b::mpr-coronal')
+      expect(from).toBe('series-a::mpr-coronal')
+      expect(to).toBe('series-b::mpr-coronal')
+      const restored = hopSeriesAnnotations(stash, from, to, marks)
+      expect(restored).toEqual(emptyAnnotationSnapshot())
+      expect(restoreSeriesAnnotations(stash, from).measurements).toHaveLength(2)
+    })
+  })
+
+  describe('ticket #3750 AC-3: coronal and sagittal panes under Enhanced on/off', () => {
+    it.each(['coronal', 'sagittal'] as const)(
+      '%s: Enhanced on/off and recon-ready synthetic ids share one hop key',
+      (plane) => {
+        // Post-G1 path (stable base id) and legacy synthetic rewrite both normalize.
+        const acquired = annotationSeriesKey(`series-a::mpr-${plane}`)
+        const enhancedStable = annotationSeriesKey(`series-a::mpr-${plane}`)
+        const enhancedLegacy = annotationSeriesKey(
+          `series-a::shape-reconstruction::mpr-${plane}`,
+        )
+        expect(acquired).toBe(`series-a::mpr-${plane}`)
+        expect(enhancedStable).toBe(acquired)
+        expect(enhancedLegacy).toBe(acquired)
+      },
+    )
+
+    it.each(['coronal', 'sagittal'] as const)(
+      '%s: hopSeriesAnnotations no-ops on Enhanced toggle so marks stay live',
+      (plane) => {
+        const stash = createAnnotationStash()
+        const marks = sampleSnapshot({
+          measurements: [
+            {
+              id: 11,
+              tool: 'distance',
+              slice: 4,
+              start: { x: 0.2, y: 0.3 },
+              end: { x: 0.7, y: 0.8 },
+            },
+            {
+              id: 12,
+              tool: 'roi',
+              slice: 5,
+              start: { x: 0.1, y: 0.1 },
+              end: { x: 0.5, y: 0.6 },
+            },
+          ],
+          pinnedProbes: [
+            {
+              id: 13,
+              slice: 4,
+              x: 0.4,
+              y: 0.6,
+              sample: { col: 8, row: 9, intensity: 40, display: 50, scalar: 200 },
+            },
+          ],
+        })
+        const key = annotationSeriesKey(`series-a::mpr-${plane}`)
+        // SliceViewer early-return path: previous === next after annotationSeriesKey.
+        const afterToggle = hopSeriesAnnotations(stash, key, key, marks)
+        expect(afterToggle).toEqual(marks)
+        expect(stash.size).toBe(0)
+      },
+    )
+
+    it('plane switch coronal↔sagittal still hops while Enhanced synthetic tags strip', () => {
+      const stash = createAnnotationStash()
+      const coronalMarks = sampleSnapshot()
+      const from = annotationSeriesKey('series-a::shape-reconstruction::mpr-coronal')
+      const to = annotationSeriesKey('series-a::shape-reconstruction::mpr-sagittal')
+      expect(from).toBe('series-a::mpr-coronal')
+      expect(to).toBe('series-a::mpr-sagittal')
+      expect(from).not.toBe(to)
+
+      const onSagittal = hopSeriesAnnotations(stash, from, to, coronalMarks)
+      expect(onSagittal).toEqual(emptyAnnotationSnapshot())
+      expect(restoreSeriesAnnotations(stash, from)).toEqual(coronalMarks)
+
+      const sagittalMarks = sampleSnapshot({
+        measurements: [
+          {
+            id: 20,
+            tool: 'distance',
+            slice: 1,
+            start: { x: 0, y: 0 },
+            end: { x: 1, y: 1 },
+          },
+        ],
+        pinnedProbes: [],
+      })
+      const backToCoronal = hopSeriesAnnotations(stash, to, from, sagittalMarks)
+      expect(backToCoronal).toEqual(coronalMarks)
+      expect(restoreSeriesAnnotations(stash, to)).toEqual(sagittalMarks)
+    })
+  })
+
   it('keys snapshots by seriesId and restores distance, ROI, and pinned probes', () => {
     const stash = createAnnotationStash()
     const flair = sampleSnapshot()

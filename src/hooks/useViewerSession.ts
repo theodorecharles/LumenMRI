@@ -147,12 +147,14 @@ export function useViewerSession() {
   }, [])
 
   useEffect(() => {
-    if (!series.length || activeSeriesId) return
+    // Library home must not auto-load: goHome during scan can leave activeSeriesId null
+    // while series later fills (or residual series remains). Only recommend in the viewer.
+    if (screen !== 'viewer' || !series.length || activeSeriesId) return
     const recommended = series.find((item) => item.supported)
     if (!recommended) return
     setActiveSeriesId(recommended.id)
     loadSeries(recommended.id)
-  }, [activeSeriesId, loadSeries, series])
+  }, [activeSeriesId, loadSeries, screen, series])
 
   // Failed loads leave the previous volume in place. Revert the series highlight
   // to the last successful volume so the panel matches the stage. Skip when
@@ -358,13 +360,16 @@ export function useViewerSession() {
   const goHome = useCallback((pushHistory = true) => {
     clearAnnotationStash(annotationStashRef.current)
     cancelPendingOpen()
+    // Match openBundledSeries: drop in-flight scan/load so volume-ready cannot setVolume
+    // after L / Scan library / brand leave the viewer (AC-1, AC-2).
+    cancelInFlight()
     // Abandon in-flight / applied compare so busy cannot stick after leaving the viewer.
     clearCompare()
     setScreen('library')
     if (pushHistory) {
       window.history.pushState({ screen: 'library' }, '', `${window.location.pathname}${window.location.search}`)
     }
-  }, [cancelPendingOpen, clearCompare])
+  }, [cancelInFlight, cancelPendingOpen, clearCompare])
 
   const handleFiles = useCallback(
     (files: File[]) => {

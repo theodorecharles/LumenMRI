@@ -3,6 +3,21 @@
  * Survives active-series hops within a study; cleared only on library home / new scan.
  */
 
+/**
+ * Synthetic volume mode tags that must not drive hopSeriesAnnotations / view reset.
+ * Keeps base series id and optional `::mpr-${plane}` so plane changes still hop.
+ * Example: `base::shape-reconstruction::mpr-coronal` → `base::mpr-coronal`.
+ */
+const SYNTHETIC_SERIES_MODE_RE = /::shape-reconstruction(?=::|$)/g
+
+/**
+ * Stable annotation / hop identity for a volume seriesId.
+ * Strips enhanced-reconstruction synthetic suffixes only.
+ */
+export function annotationSeriesKey(seriesId: string): string {
+  return seriesId.replace(SYNTHETIC_SERIES_MODE_RE, '')
+}
+
 export type StashedMeasurementTool = 'distance' | 'roi' | 'angle'
 
 export interface StashedPoint {
