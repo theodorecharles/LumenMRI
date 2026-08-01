@@ -147,12 +147,14 @@ export function useViewerSession() {
   }, [])
 
   useEffect(() => {
-    if (!series.length || activeSeriesId) return
+    // Library home must not auto-load: goHome during scan can leave activeSeriesId null
+    // while series later fills (or residual series remains). Only recommend in the viewer.
+    if (screen !== 'viewer' || !series.length || activeSeriesId) return
     const recommended = series.find((item) => item.supported)
     if (!recommended) return
     setActiveSeriesId(recommended.id)
     loadSeries(recommended.id)
-  }, [activeSeriesId, loadSeries, series])
+  }, [activeSeriesId, loadSeries, screen, series])
 
   // Failed loads leave the previous volume in place. Revert the series highlight
   // to the last successful volume so the panel matches the stage. Skip when
