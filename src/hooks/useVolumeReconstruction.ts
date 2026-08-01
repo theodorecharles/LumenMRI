@@ -50,7 +50,11 @@ export function useVolumeReconstruction(source: VolumeData | null) {
       message?: string
     }>) => {
       const message = event.data
-      if (message.requestId !== requestId) return
+      // Compare against requestRef.current, not the effect-local requestId.
+      // Cleanup only terminates the worker; already-queued main-thread message
+      // events can still fire the old listener after a newer series hop advanced
+      // the ref. Closed-over requestId would still match that stale event.
+      if (message.requestId !== requestRef.current) return
       if (message.type === 'progress') {
         const progress = message.progress || 0
         setState((current) => ({
