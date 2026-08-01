@@ -39,6 +39,7 @@ import {
   midSliceIndex,
   sliceIndexFromStackFraction,
 } from './lib/volume'
+import { clearAnnotationStash, createAnnotationStash } from './lib/annotationStash'
 import {
   bundledSeriesSummary,
   loadBundledCatalog,
@@ -113,6 +114,13 @@ export default function App() {
   /** Sync guard so cancel + re-open in the same tick is not blocked by stale openingId state. */
   const openingIdRef = useRef<string | null>(null)
   const compareOpeningIdRef = useRef<string | null>(null)
+  /**
+   * Session 2D annotation stash keyed by seriesId. Shared across primary + Compare B
+   * SliceViewers so series-card clicks and Compare B hops only stash/restore (AC-3).
+   * clearAnnotationStash is reserved for library home / new local open (AC-4) — never
+   * call it from selectSeries or setCompareSeries.
+   */
+  const annotationStashRef = useRef(createAnnotationStash())
   const { series, volume, setVolume, progress, error, setError, scanFiles, loadSeries, cancelInFlight } =
     useDicomLoader()
   const reconstruction = useVolumeReconstruction(volume)
@@ -407,6 +415,8 @@ export default function App() {
     [cancelInFlight, clearCompare, compareSeriesId, pushViewerLocation, rememberVolume, screen, setError, setVolume, volume],
   )
 
+  // Compare B hop: load secondary volume only. Must not clearAnnotationStash — pane B
+  // seriesId change stashes/restores via the shared Map (AC-3).
   const setCompareSeries = useCallback(
     async (selection: SeriesSummary) => {
       if (!selection.supported || selection.id === activeSeriesId) return
@@ -497,6 +507,7 @@ export default function App() {
       const match = window.location.hash.match(/^#series\/(.+)$/)
       if (!match) {
         // Browser Back to library while a bundled open is in flight.
+        clearAnnotationStash(annotationStashRef.current)
         cancelPendingOpen()
         clearCompare()
         setScreen('library')
@@ -535,6 +546,7 @@ export default function App() {
   }, [bundledSeries, cancelInFlight, cancelPendingOpen, clearCompare, loadSeries, openBundledSeries, series])
 
   const goHome = useCallback((pushHistory = true) => {
+    clearAnnotationStash(annotationStashRef.current)
     cancelPendingOpen()
     // Abandon in-flight / applied compare so busy cannot stick after leaving the viewer.
     clearCompare()
@@ -548,6 +560,7 @@ export default function App() {
   const handleFiles = useCallback(
     (files: File[]) => {
       if (!files.length) return
+      clearAnnotationStash(annotationStashRef.current)
       // Drop any in-flight bundled open so a late fetch cannot overwrite this local intent.
       cancelPendingOpen()
       clearCompare()
@@ -570,6 +583,8 @@ export default function App() {
     }
   }, [handleFiles])
 
+  // Series-card click: switch primary volume only. Must not clearAnnotationStash —
+  // SliceViewer stashes the outgoing seriesId and restores the incoming one (AC-3).
   const selectSeries = (selection: SeriesSummary) => {
     if (busy) return
     // Same-id is a no-op unless first load failed (error + no volume). Error-revert
@@ -1166,6 +1181,7 @@ export default function App() {
                         hideCropControls
                         viewTransform={sliceViewA}
                         onViewTransformChange={handleSliceViewA}
+                        annotationStash={annotationStashRef.current}
                       />
                       {compareVolume ? (
                         <SliceViewer
@@ -1187,6 +1203,7 @@ export default function App() {
                           viewTransform={sliceViewB}
                           onViewTransformChange={handleSliceViewB}
                           resetControlledViewOnVolumeChange={!viewLinked}
+                          annotationStash={annotationStashRef.current}
                         />
                       ) : (
                         <div className="compare-empty-pane" role="status">
@@ -1292,6 +1309,7 @@ export default function App() {
                           slicePlane={slicePlane}
                           acquiredPlane={acquiredPlane}
                           onSlicePlaneChange={changeSlicePlane}
+                          annotationStash={annotationStashRef.current}
                         />
                       ) : null}
                     </>
