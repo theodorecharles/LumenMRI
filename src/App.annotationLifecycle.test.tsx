@@ -156,6 +156,7 @@ describe('goHome cancels in-flight DICOM work', () => {
     expect(mocks.cancelInFlight).toHaveBeenCalledTimes(1)
     // cancelInFlight is what drops worker volume-ready; with the mock, no late setVolume.
     expect(mocks.setVolume).not.toHaveBeenCalled()
+    // AC-3: sticky scanning/loading clear lives inside cancelInFlight (see useDicomLoader.test.ts).
   })
 })
 
