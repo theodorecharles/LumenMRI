@@ -10,6 +10,7 @@ import {
   type BundledCatalog,
   type BundledSeries,
 } from '../lib/bundledVolume'
+import { VolumeCache } from '../lib/volumeCache'
 import type { SeriesSummary, VolumeData, VolumeSettings } from '../types'
 
 export type Screen = 'library' | 'viewer'
@@ -26,7 +27,7 @@ const COMPARE_WL_DEFAULT: Pick<VolumeSettings, 'window' | 'level'> = {
  */
 export function useViewerSession() {
   const inputRef = useRef<HTMLInputElement>(null)
-  const volumeCache = useRef(new Map<string, VolumeData>())
+  const volumeCache = useRef(new VolumeCache())
   /** Bumps on each bundled open so a later click can supersede an in-flight load. */
   const openGenerationRef = useRef(0)
   /** Sync guard so cancel + re-open in the same tick is not blocked by stale openingId state. */
@@ -75,8 +76,13 @@ export function useViewerSession() {
   )
 
   const rememberVolume = useCallback((next: VolumeData) => {
-    volumeCache.current.set(next.seriesId, next)
+    volumeCache.current.set(next)
   }, [])
+
+  // Pin active primary + compare so LRU eviction can drop the rest for GC.
+  useEffect(() => {
+    volumeCache.current.setPins(activeSeriesId, compareSeriesId)
+  }, [activeSeriesId, compareSeriesId])
 
   const clearCompare = useCallback(() => {
     compareOpeningIdRef.current = null
@@ -181,7 +187,7 @@ export function useViewerSession() {
         if (!selectedVolume) {
           selectedVolume = await loadBundledVolume(selection)
           // Cache even if superseded/cancelled so a later open of the same series is free.
-          volumeCache.current.set(selection.id, selectedVolume)
+          volumeCache.current.set(selectedVolume)
         }
         // Stale generation (superseded click or user left open intent) — do not force viewer.
         if (generation !== openGenerationRef.current) return
