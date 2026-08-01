@@ -183,6 +183,93 @@ describe('orthogonal MPR', () => {
     expect(coronal.seriesId).toBe(resliceVolume({ ...volume, data: volume.data }, 'coronal').seriesId)
   })
 
+  describe('ticket #3750 AC-3: coronal/sagittal stable under Enhanced on/off', () => {
+    /**
+     * Mirrors App enhancedMprSource: swap data/dimensions/spacing for recon-ready
+     * Enhanced, never rewrite seriesId with ::shape-reconstruction.
+     */
+    function enhancedMprSource(
+      acquired: VolumeData,
+      enhanced: VolumeData,
+      reconstructionEnabled: boolean,
+    ): VolumeData {
+      if (!reconstructionEnabled) return acquired
+      return {
+        ...acquired,
+        data: enhanced.data,
+        dimensions: enhanced.dimensions,
+        spacing: enhanced.spacing,
+        physicalSize: acquired.physicalSize,
+        sliceCount: enhanced.dimensions[2],
+      }
+    }
+
+    function makeEnhancedGrid(acquired: VolumeData): VolumeData {
+      // Recon-ready: texture-budget downsample of acquired in-plane grid + denser Z
+      // (synthetic slices). Same base seriesId — App never stamps ::shape-reconstruction.
+      // Coronal stack depth = source rows; sagittal stack depth = source cols.
+      const dimensions: [number, number, number] = [
+        Math.max(1, Math.floor(acquired.dimensions[0] / 2)),
+        Math.max(1, Math.floor(acquired.dimensions[1] / 2)),
+        acquired.dimensions[2] * 2,
+      ]
+      const data = new Uint8Array(dimensions[0] * dimensions[1] * dimensions[2])
+      return {
+        ...acquired,
+        data,
+        dimensions,
+        spacing: [
+          acquired.spacing[0] * 2,
+          acquired.spacing[1] * 2,
+          acquired.spacing[2] / 2,
+        ],
+        sliceCount: dimensions[2],
+      }
+    }
+
+    it.each(['coronal', 'sagittal'] as const)(
+      '%s reslice seriesId is identical for Acquired vs Enhanced once recon is ready',
+      (plane) => {
+        // Larger axial grid so in-plane downsample changes reformat stack depth.
+        const acquired: VolumeData = {
+          ...makeVolume('Axial'),
+          dimensions: [8, 6, 4],
+          data: new Uint8Array(8 * 6 * 4),
+          spacing: [1, 1, 2],
+          physicalSize: [8, 6, 8],
+          sliceCount: 4,
+        }
+        const enhanced = makeEnhancedGrid(acquired)
+        const acquiredPane = resliceVolume(enhancedMprSource(acquired, enhanced, false), plane)
+        const enhancedPane = resliceVolume(enhancedMprSource(acquired, enhanced, true), plane)
+
+        expect(acquiredPane.seriesId).toBe(`mpr-test::mpr-${plane}`)
+        expect(enhancedPane.seriesId).toBe(acquiredPane.seriesId)
+        // Enhanced in-plane downsample changes reformat stack depth; hop id must not follow.
+        expect(enhancedPane.dimensions[2]).not.toBe(acquiredPane.dimensions[2])
+        // Pre-G1 synthetic rewrite would have produced base::shape-reconstruction::mpr-${plane}.
+        expect(enhancedPane.seriesId).not.toContain('shape-reconstruction')
+      },
+    )
+
+    it('keeps coronal and sagittal hop ids distinct while each stays mode-stable', () => {
+      const acquired = makeVolume('Axial')
+      const enhanced = makeEnhancedGrid(acquired)
+      const modes = [false, true] as const
+      const coronalIds = modes.map(
+        (on) => resliceVolume(enhancedMprSource(acquired, enhanced, on), 'coronal').seriesId,
+      )
+      const sagittalIds = modes.map(
+        (on) => resliceVolume(enhancedMprSource(acquired, enhanced, on), 'sagittal').seriesId,
+      )
+      expect(new Set(coronalIds).size).toBe(1)
+      expect(new Set(sagittalIds).size).toBe(1)
+      expect(coronalIds[0]).toBe('mpr-test::mpr-coronal')
+      expect(sagittalIds[0]).toBe('mpr-test::mpr-sagittal')
+      expect(coronalIds[0]).not.toBe(sagittalIds[0])
+    })
+  })
+
   it('maps a 3D source point into the active plane', () => {
     // Axial +z is superior but coronal rows run downward to I, so y mirrors.
     const coronalPoint = sourcePointToPlane([0.2, 0.4, 0.8], 'axial', 'coronal')
