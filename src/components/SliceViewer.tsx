@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import {
   ChevronDown,
   ChevronUp,
+  Contrast,
   Crop,
   Crosshair,
   DraftingCompass,
@@ -15,7 +16,12 @@ import {
   Trash2,
 } from 'lucide-react'
 import { rulerLengthMillimeters } from '../lib/mpr'
-import { formatProbeScalar, samplePixelAt, type PixelProbeSample } from '../lib/pixelProbe'
+import {
+  formatProbeScalar,
+  mapIntensityToDisplayGray,
+  samplePixelAt,
+  type PixelProbeSample,
+} from '../lib/pixelProbe'
 import { computeRoiStats, formatRoiSummary } from '../lib/roiStats'
 import { exportCapturePng, renderAnnotatedSliceCanvas, type CaptureExportResult } from '../lib/sliceCapture'
 import { FIT_VIEW, MIN_VIEW_SCALE, zoomAboutPoint, type ViewTransform } from '../lib/sliceView'
@@ -303,6 +309,8 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const [panning, setPanning] = useState(false)
     const [measurementTool, setMeasurementTool] = useState<MeasurementTool | null>(null)
     const [probeTool, setProbeTool] = useState(false)
+    /** Pane-local display polarity; never written into volume data or capture metadata. */
+    const [invertDisplay, setInvertDisplay] = useState(false)
     const [measurements, setMeasurements] = useState<Measurement[]>([])
     const [measurementDraft, setMeasurementDraft] = useState<Measurement | null>(null)
     const [probeHover, setProbeHover] = useState<{
@@ -427,13 +435,14 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       canvas.height = height
       const image = context.createImageData(width, height)
       const sliceOffset = safeIndex * width * height
-      const windowLow = (volumeSettings.level - volumeSettings.window * 0.5) * 255
-      const windowWidth = Math.max(4, volumeSettings.window * 255)
+      const { window, level } = volumeSettings
 
       for (let pixel = 0; pixel < width * height; pixel += 1) {
-        const value = Math.max(
-          0,
-          Math.min(255, ((volume.data[sliceOffset + pixel] - windowLow) / windowWidth) * 255),
+        const value = mapIntensityToDisplayGray(
+          volume.data[sliceOffset + pixel] ?? 0,
+          window,
+          level,
+          invertDisplay,
         )
         const target = pixel * 4
         image.data[target] = value
@@ -442,7 +451,15 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         image.data[target + 3] = 255
       }
       context.putImageData(image, 0, 0)
-    }, [height, safeIndex, volume.data, volumeSettings.level, volumeSettings.window, width])
+    }, [
+      height,
+      invertDisplay,
+      safeIndex,
+      volume.data,
+      volumeSettings.level,
+      volumeSettings.window,
+      width,
+    ])
 
     useEffect(() => {
       const canvas = canvasRef.current
@@ -507,7 +524,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       if (interactionRef.current?.type === 'measurement') interactionRef.current = null
     }, [safeIndex])
 
-    // Keep live probe display gray in sync when W/L sliders change under a parked cursor.
+    // Keep live probe display gray in sync when W/L or invert changes under a parked cursor.
     useEffect(() => {
       setProbeHover((current) => {
         if (!current) return null
@@ -518,11 +535,12 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
           current.y,
           volumeSettings.window,
           volumeSettings.level,
+          invertDisplay,
         )
         if (!sample) return null
         return { x: current.x, y: current.y, sample }
       })
-    }, [safeIndex, volume, volumeSettings.level, volumeSettings.window])
+    }, [safeIndex, volume, volumeSettings.level, volumeSettings.window, invertDisplay])
 
     useEffect(() => {
       if (!cinePlaying || depth <= 1) return
@@ -596,6 +614,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         point.y,
         volumeSettings.window,
         volumeSettings.level,
+        invertDisplay,
       )
       if (!sample) return null
       probeIdRef.current += 1
@@ -626,6 +645,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         point.y,
         volumeSettings.window,
         volumeSettings.level,
+        invertDisplay,
       )
       if (!sample) {
         setProbeHover(null)
@@ -904,6 +924,10 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
       if (next) onCropEditingChange(false)
     }
 
+    const toggleInvertDisplay = () => {
+      setInvertDisplay((current) => !current)
+    }
+
     const toggleProbeTool = () => {
       const next = !probeTool
       setProbeTool(next)
@@ -1017,6 +1041,7 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
         data-view-transform={`${view.scale},${view.x},${view.y}`}
         data-window={volumeSettings.window}
         data-level={volumeSettings.level}
+        data-invert={invertDisplay ? 'true' : 'false'}
         data-slice-plane={slicePlane}
         onWheel={handleWheel}
       >
@@ -1358,6 +1383,17 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
                 onClick={toggleProbeTool}
               >
                 <Crosshair size={14} /><span>Probe</span>
+              </button>
+              <button
+                type="button"
+                className={invertDisplay ? 'active invert-active' : ''}
+                aria-label="Invert grayscale"
+                aria-pressed={invertDisplay}
+                title="Invert grayscale polarity (display only)"
+                data-testid="invert-tool"
+                onClick={toggleInvertDisplay}
+              >
+                <Contrast size={14} /><span>Invert</span>
               </button>
               <button
                 type="button"
