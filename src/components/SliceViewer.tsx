@@ -16,6 +16,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import {
+  annotationSeriesKey,
   annotationStashGeneration,
   hopSeriesAnnotations,
   maxAnnotationId,
@@ -33,6 +34,7 @@ import {
 import { computeRoiStats, formatRoiSummary } from '../lib/roiStats'
 import { exportCapturePng, renderAnnotatedSliceCanvas, type CaptureExportResult } from '../lib/sliceCapture'
 import { FIT_VIEW, MIN_VIEW_SCALE, zoomAboutPoint, type ViewTransform } from '../lib/sliceView'
+import { mapRelativeSliceIndex } from '../lib/volume'
 import type { AnatomicalPlane, CropBounds, VolumeData, VolumeSettings } from '../types'
 
 const ZOOM_STEP = 1.12
@@ -275,6 +277,19 @@ interface AnnotationInventoryItem {
   flashY: number
 }
 
+interface AnnotationStackState {
+  seriesKey: string
+  depth: number
+  sliceIndex: number
+}
+
+interface PreservedSliceTransition {
+  /** Safe index rendered before App applies its fractional depth remap. */
+  interim: number
+  /** Final fractional index that App's MPR depth effect will apply. */
+  expected: number
+}
+
 export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
   function SliceViewer({
     volume,
@@ -314,6 +329,10 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     const annotationStashGenerationRef = useRef(annotationStashGeneration(annotationStash))
     /** null until first series effect — distinguishes mount rehydrate from live hop. */
     const seriesIdRef = useRef<string | null>(null)
+    /** Last rendered annotation stack, including its through-plane sampling depth. */
+    const annotationStackRef = useRef<AnnotationStackState | null>(null)
+    /** Same-stack depth remaps must not look like user-driven slice navigation. */
+    const preservedSliceTransitionRef = useRef<PreservedSliceTransition | null>(null)
     const measurementsRef = useRef<Measurement[]>([])
     const pinnedProbesRef = useRef<PinnedProbe[]>([])
     const viewRef = useRef<ViewTransform>(FIT_VIEW)
@@ -507,32 +526,117 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     }, [height, width])
 
     useEffect(() => {
+      const seriesKey = annotationSeriesKey(volume.seriesId)
+      const previous = annotationStackRef.current
+
+      if (
+        previous
+        && previous.seriesKey === seriesKey
+        && previous.depth !== depth
+      ) {
+        const remapSlice = (index: number) => (
+          mapRelativeSliceIndex(index, previous.depth, depth)
+        )
+        const expectedSliceIndex = remapSlice(previous.sliceIndex)
+
+        // App owns the controlled slice index. Preserve the draft across both a
+        // temporary clamp under the new depth and App's following fractional remap.
+        if (safeIndex !== previous.sliceIndex || safeIndex !== expectedSliceIndex) {
+          preservedSliceTransitionRef.current = {
+            interim: safeIndex,
+            expected: expectedSliceIndex,
+          }
+        }
+
+        setMeasurements((current) => {
+          const next = current.map((measurement) => ({
+            ...measurement,
+            slice: remapSlice(measurement.slice),
+          }))
+          measurementsRef.current = next
+          return next
+        })
+        setPinnedProbes((current) => {
+          const next = current.map((probe) => {
+            const slice = remapSlice(probe.slice)
+            const sample = samplePixelAt(
+              volume,
+              slice,
+              probe.x,
+              probe.y,
+              volumeSettings.window,
+              volumeSettings.level,
+              invertDisplay,
+            )
+            return { ...probe, slice, ...(sample ? { sample } : null) }
+          })
+          pinnedProbesRef.current = next
+          return next
+        })
+        setMeasurementDraft((current) => (
+          current ? { ...current, slice: remapSlice(current.slice) } : null
+        ))
+
+        if (angleBuildRef.current) {
+          angleBuildRef.current = {
+            ...angleBuildRef.current,
+            slice: remapSlice(angleBuildRef.current.slice),
+          }
+        }
+        const interaction = interactionRef.current
+        if (interaction?.type === 'measurement') {
+          interactionRef.current = {
+            ...interaction,
+            slice: remapSlice(interaction.slice),
+          }
+        }
+
+        annotationStackRef.current = {
+          seriesKey,
+          depth,
+          sliceIndex: expectedSliceIndex,
+        }
+        return
+      }
+
+      if (previous?.seriesKey !== seriesKey) {
+        preservedSliceTransitionRef.current = null
+      }
+      annotationStackRef.current = { seriesKey, depth, sliceIndex: safeIndex }
+    }, [depth, invertDisplay, safeIndex, volume, volumeSettings.level, volumeSettings.window])
+
+    useEffect(() => {
       const previousSeriesId = seriesIdRef.current
-      const nextSeriesId = volume.seriesId
+      // Strip synthetic enhanced/recon tags; hop only when base series (or MPR plane) changes.
+      const nextSeriesId = annotationSeriesKey(volume.seriesId)
       const currentStashGeneration = annotationStashGeneration(annotationStashRef.current)
 
-      // Series-card / Compare B hop (or mount remount): stash+restore only — never clear.
-      if (previousSeriesId !== nextSeriesId) {
-        const restored = hopSeriesAnnotations(
-          annotationStashRef.current,
-          previousSeriesId,
-          nextSeriesId,
-          {
-            measurements: measurementsRef.current,
-            pinnedProbes: pinnedProbesRef.current,
-          },
-          annotationStashGenerationRef.current,
-        )
-        setMeasurements(restored.measurements as Measurement[])
-        setPinnedProbes(restored.pinnedProbes as PinnedProbe[])
-        const highId = maxAnnotationId(restored)
-        if (highId > measurementIdRef.current) measurementIdRef.current = highId
-        if (highId > probeIdRef.current) probeIdRef.current = highId
-        seriesIdRef.current = nextSeriesId
+      // Synthetic-only seriesId flips (Enhanced ready / Acquired↔Enhanced) must not hop or reset.
+      if (previousSeriesId === nextSeriesId) {
+        annotationStashGenerationRef.current = currentStashGeneration
+        return
       }
+
+      // Series-card / Compare B hop (or mount remount): stash+restore only — never clear.
+      const restored = hopSeriesAnnotations(
+        annotationStashRef.current,
+        previousSeriesId,
+        nextSeriesId,
+        {
+          measurements: measurementsRef.current,
+          pinnedProbes: pinnedProbesRef.current,
+        },
+        annotationStashGenerationRef.current,
+      )
+      setMeasurements(restored.measurements as Measurement[])
+      setPinnedProbes(restored.pinnedProbes as PinnedProbe[])
+      const highId = maxAnnotationId(restored)
+      if (highId > measurementIdRef.current) measurementIdRef.current = highId
+      if (highId > probeIdRef.current) probeIdRef.current = highId
+      seriesIdRef.current = nextSeriesId
       annotationStashGenerationRef.current = currentStashGeneration
 
-      // In-progress tools never carry across series; completed marks come from the stash.
+      // In-progress tools never carry across real series hops; completed marks come from the stash.
       setMeasurementDraft(null)
       setMeasurementTool(null)
       setProbeTool(false)
@@ -604,6 +708,20 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
     }, [depth])
 
     useEffect(() => {
+      const preservedTransition = preservedSliceTransitionRef.current
+      if (
+        preservedTransition
+        && (
+          safeIndex === preservedTransition.interim
+          || safeIndex === preservedTransition.expected
+        )
+      ) {
+        if (safeIndex === preservedTransition.expected) {
+          preservedSliceTransitionRef.current = null
+        }
+        return
+      }
+      preservedSliceTransitionRef.current = null
       setMeasurementDraft(null)
       angleBuildRef.current = null
       setProbeHover(null)

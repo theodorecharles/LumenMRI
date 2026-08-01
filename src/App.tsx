@@ -185,9 +185,10 @@ export default function App() {
   const enhancedMprSource = useMemo<VolumeData | null>(() => {
     const enhanced = reconstructionEnabled ? reconstruction.volume : null
     if (!volume || !enhanced || enhanced.seriesId !== volume.seriesId) return volume
+    // Keep base seriesId stable: synthetic mode tags must not drive SliceViewer
+    // hopSeriesAnnotations / view reset when recon becomes ready or Enhanced toggles.
     return {
       ...volume,
-      seriesId: `${volume.seriesId}::shape-reconstruction`,
       data: enhanced.data,
       dimensions: enhanced.dimensions,
       spacing: enhanced.spacing,
