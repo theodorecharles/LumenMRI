@@ -358,13 +358,16 @@ export function useViewerSession() {
   const goHome = useCallback((pushHistory = true) => {
     clearAnnotationStash(annotationStashRef.current)
     cancelPendingOpen()
+    // Match openBundledSeries: drop in-flight scan/load so volume-ready cannot setVolume
+    // after L / Scan library / brand leave the viewer (AC-1, AC-2).
+    cancelInFlight()
     // Abandon in-flight / applied compare so busy cannot stick after leaving the viewer.
     clearCompare()
     setScreen('library')
     if (pushHistory) {
       window.history.pushState({ screen: 'library' }, '', `${window.location.pathname}${window.location.search}`)
     }
-  }, [cancelPendingOpen, clearCompare])
+  }, [cancelInFlight, cancelPendingOpen, clearCompare])
 
   const handleFiles = useCallback(
     (files: File[]) => {
