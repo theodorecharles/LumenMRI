@@ -16,6 +16,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import {
+  annotationSeriesKey,
   annotationStashGeneration,
   hopSeriesAnnotations,
   maxAnnotationId,
@@ -508,31 +509,36 @@ export const SliceViewer = forwardRef<SliceViewerHandle, SliceViewerProps>(
 
     useEffect(() => {
       const previousSeriesId = seriesIdRef.current
-      const nextSeriesId = volume.seriesId
+      // Strip synthetic enhanced/recon tags; hop only when base series (or MPR plane) changes.
+      const nextSeriesId = annotationSeriesKey(volume.seriesId)
       const currentStashGeneration = annotationStashGeneration(annotationStashRef.current)
 
-      // Series-card / Compare B hop (or mount remount): stash+restore only — never clear.
-      if (previousSeriesId !== nextSeriesId) {
-        const restored = hopSeriesAnnotations(
-          annotationStashRef.current,
-          previousSeriesId,
-          nextSeriesId,
-          {
-            measurements: measurementsRef.current,
-            pinnedProbes: pinnedProbesRef.current,
-          },
-          annotationStashGenerationRef.current,
-        )
-        setMeasurements(restored.measurements as Measurement[])
-        setPinnedProbes(restored.pinnedProbes as PinnedProbe[])
-        const highId = maxAnnotationId(restored)
-        if (highId > measurementIdRef.current) measurementIdRef.current = highId
-        if (highId > probeIdRef.current) probeIdRef.current = highId
-        seriesIdRef.current = nextSeriesId
+      // Synthetic-only seriesId flips (Enhanced ready / Acquired↔Enhanced) must not hop or reset.
+      if (previousSeriesId === nextSeriesId) {
+        annotationStashGenerationRef.current = currentStashGeneration
+        return
       }
+
+      // Series-card / Compare B hop (or mount remount): stash+restore only — never clear.
+      const restored = hopSeriesAnnotations(
+        annotationStashRef.current,
+        previousSeriesId,
+        nextSeriesId,
+        {
+          measurements: measurementsRef.current,
+          pinnedProbes: pinnedProbesRef.current,
+        },
+        annotationStashGenerationRef.current,
+      )
+      setMeasurements(restored.measurements as Measurement[])
+      setPinnedProbes(restored.pinnedProbes as PinnedProbe[])
+      const highId = maxAnnotationId(restored)
+      if (highId > measurementIdRef.current) measurementIdRef.current = highId
+      if (highId > probeIdRef.current) probeIdRef.current = highId
+      seriesIdRef.current = nextSeriesId
       annotationStashGenerationRef.current = currentStashGeneration
 
-      // In-progress tools never carry across series; completed marks come from the stash.
+      // In-progress tools never carry across real series hops; completed marks come from the stash.
       setMeasurementDraft(null)
       setMeasurementTool(null)
       setProbeTool(false)

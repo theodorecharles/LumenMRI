@@ -172,6 +172,17 @@ describe('orthogonal MPR', () => {
     expect(resliceVolume(volume, 'sagittal')).toBe(volume)
   })
 
+  it('composes a stable mpr seriesId from the base id (no enhanced synthetic prefix)', () => {
+    // enhancedMprSource keeps base seriesId; reslice only appends ::mpr-${plane}.
+    // Acquired↔Enhanced must not flip the SliceViewer hop key (ticket #3750).
+    const volume = makeVolume('Axial')
+    const coronal = resliceVolume(volume, 'coronal')
+    const sagittal = resliceVolume(volume, 'sagittal')
+    expect(coronal.seriesId).toBe('mpr-test::mpr-coronal')
+    expect(sagittal.seriesId).toBe('mpr-test::mpr-sagittal')
+    expect(coronal.seriesId).toBe(resliceVolume({ ...volume, data: volume.data }, 'coronal').seriesId)
+  })
+
   it('maps a 3D source point into the active plane', () => {
     // Axial +z is superior but coronal rows run downward to I, so y mirrors.
     const coronalPoint = sourcePointToPlane([0.2, 0.4, 0.8], 'axial', 'coronal')

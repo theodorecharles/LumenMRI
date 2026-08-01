@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  annotationSeriesKey,
   annotationStashGeneration,
   clearAnnotationStash,
   cloneAnnotationSnapshot,
@@ -44,6 +45,54 @@ function sampleSnapshot(overrides?: Partial<SeriesAnnotationSnapshot>): SeriesAn
 }
 
 describe('annotationStash', () => {
+  describe('annotationSeriesKey (ticket #3750 AC-2)', () => {
+    it('strips shape-reconstruction synthetic mode tags only', () => {
+      expect(annotationSeriesKey('base')).toBe('base')
+      expect(annotationSeriesKey('base::shape-reconstruction')).toBe('base')
+      expect(annotationSeriesKey('base::mpr-coronal')).toBe('base::mpr-coronal')
+      expect(annotationSeriesKey('base::shape-reconstruction::mpr-coronal')).toBe(
+        'base::mpr-coronal',
+      )
+      expect(annotationSeriesKey('base::shape-reconstruction::mpr-sagittal')).toBe(
+        'base::mpr-sagittal',
+      )
+    })
+
+    it('treats Enhanced on/off and recon-ready ids as the same hop key on a fixed plane', () => {
+      const acquiredOff = annotationSeriesKey('series-a::mpr-coronal')
+      const enhancedOn = annotationSeriesKey('series-a::shape-reconstruction::mpr-coronal')
+      const enhancedOnly = annotationSeriesKey('series-a::shape-reconstruction')
+      expect(acquiredOff).toBe(enhancedOn)
+      expect(enhancedOnly).toBe('series-a')
+      // Real series hop still differs.
+      expect(annotationSeriesKey('series-b::mpr-coronal')).not.toBe(acquiredOff)
+      // Plane change still differs.
+      expect(annotationSeriesKey('series-a::mpr-sagittal')).not.toBe(acquiredOff)
+    })
+
+    it('hopSeriesAnnotations no-ops when previous and next share the same annotation key', () => {
+      const stash = createAnnotationStash()
+      const marks = sampleSnapshot()
+      const key = annotationSeriesKey('series-a::mpr-coronal')
+      // Simulated synthetic flip: same hop key, marks must stay live (no stash rewrite to empty).
+      const sameKeyRestored = hopSeriesAnnotations(stash, key, key, marks)
+      expect(sameKeyRestored).toEqual(marks)
+      expect(stash.size).toBe(0)
+    })
+
+    it('hopSeriesAnnotations still stashes on a real underlying series change', () => {
+      const stash = createAnnotationStash()
+      const marks = sampleSnapshot()
+      const from = annotationSeriesKey('series-a::shape-reconstruction::mpr-coronal')
+      const to = annotationSeriesKey('series-b::mpr-coronal')
+      expect(from).toBe('series-a::mpr-coronal')
+      expect(to).toBe('series-b::mpr-coronal')
+      const restored = hopSeriesAnnotations(stash, from, to, marks)
+      expect(restored).toEqual(emptyAnnotationSnapshot())
+      expect(restoreSeriesAnnotations(stash, from).measurements).toHaveLength(2)
+    })
+  })
+
   it('keys snapshots by seriesId and restores distance, ROI, and pinned probes', () => {
     const stash = createAnnotationStash()
     const flair = sampleSnapshot()
