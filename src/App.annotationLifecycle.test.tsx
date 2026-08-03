@@ -73,6 +73,7 @@ vi.mock('./hooks/useVolumeReconstruction', () => ({
 }))
 
 import App from './App'
+import './styles.css'
 
 const sampleSeries: SeriesSummary = {
   id: 'series-1',
@@ -157,6 +158,38 @@ describe('goHome cancels in-flight DICOM work', () => {
     // cancelInFlight is what drops worker volume-ready; with the mock, no late setVolume.
     expect(mocks.setVolume).not.toHaveBeenCalled()
     // AC-3: sticky scanning/loading clear lives inside cancelInFlight (see useDicomLoader.test.ts).
+  })
+})
+
+describe('PWA app-shell structure', () => {
+  it('keeps primary navigation outside the designated content scroller (PWA AC-1, AC-2)', () => {
+    const { container } = render(<App />)
+    const shell = container.querySelector<HTMLElement>('.app-shell')
+    const appMain = container.querySelector<HTMLElement>('[data-scroll-container="main-content"]')
+    const bottomNav = screen.getByRole('navigation', { name: 'Primary navigation' })
+
+    expect(shell).not.toBeNull()
+    expect(appMain).not.toBeNull()
+    expect(appMain?.parentElement).toBe(shell)
+    expect(bottomNav.parentElement).toBe(shell)
+    expect(appMain?.contains(bottomNav)).toBe(false)
+    expect(appMain?.nextElementSibling).toBe(bottomNav)
+  })
+
+  it('locks the document and leaves the bottom nav in normal flow (PWA AC-1, AC-2)', () => {
+    const { container } = render(<App />)
+    container.id = 'root'
+    const appMain = container.querySelector<HTMLElement>('[data-scroll-container="main-content"]')!
+    const bottomNav = screen.getByRole('navigation', { name: 'Primary navigation' })
+
+    expect(getComputedStyle(document.documentElement).overflow).toBe('hidden')
+    expect(getComputedStyle(document.body).overflow).toBe('hidden')
+    expect(getComputedStyle(container).overflow).toBe('hidden')
+    expect(getComputedStyle(appMain).overflowY).toBe('auto')
+    expect(getComputedStyle(bottomNav).position).toBe('relative')
+    expect(getComputedStyle(bottomNav).transform).toBe('none')
+    expect(getComputedStyle(bottomNav).filter).toBe('none')
+    expect(getComputedStyle(bottomNav).contain).toBe('none')
   })
 })
 

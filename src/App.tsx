@@ -1,6 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Box,
   Camera,
   CircleHelp,
   Columns2,
@@ -47,6 +46,7 @@ import type {
   VolumeSettings,
 } from './types'
 import { ControlPanel } from './components/ControlPanel'
+import { BottomNavigation } from './components/BottomNavigation'
 import { EmptyStage } from './components/EmptyStage'
 import { ScanLibrary } from './components/ScanLibrary'
 import { SeriesPanel } from './components/SeriesPanel'
@@ -690,17 +690,18 @@ export default function App() {
         }}
       />
 
-      {screen === 'library' ? (
-        <ScanLibrary
-          catalog={catalog}
-          loading={catalogLoading}
-          error={catalogError}
-          openingId={openingId}
-          onOpenSeries={(selection) => void openBundledSeries(selection)}
-          onOpenLocal={openFolder}
-        />
-      ) : (
-        <div className="workspace">
+      <div className="app-main" data-scroll-container="main-content">
+        {screen === 'library' ? (
+          <ScanLibrary
+            catalog={catalog}
+            loading={catalogLoading}
+            error={catalogError}
+            openingId={openingId}
+            onOpenSeries={(selection) => void openBundledSeries(selection)}
+            onOpenLocal={openFolder}
+          />
+        ) : (
+          <div className="workspace">
           <SeriesPanel
             series={displaySeries}
             activeId={activeSeriesId}
@@ -1128,17 +1129,25 @@ export default function App() {
             onSetView={(view) => viewerRef.current?.setView(view)}
             onRotate={(axis) => viewerRef.current?.rotateVolume(axis)}
           />
-        </div>
-      )}
+          </div>
+        )}
+      </div>
 
-      <footer className="app-footer">
-        <span><Box size={12} /> {screen === 'library' ? `${bundledSeries.length} included sequences` : volume?.description || 'No active volume'}</span>
-        <span>All scan data stays on this device</span>
-        <span className={error || progress.phase === 'error' ? 'footer-ready is-error' : 'footer-ready'}>
-          <i />
-          {busy ? progress.label : error || progress.phase === 'error' ? progress.label || error : 'Renderer ready'}
-        </span>
-      </footer>
+      <BottomNavigation
+        screen={screen}
+        detail={screen === 'library'
+          ? `${bundledSeries.length} included sequences`
+          : volume?.description || 'No active volume'}
+        status={busy
+          ? progress.label
+          : error || progress.phase === 'error'
+            ? progress.label || error || 'Renderer error'
+            : 'Renderer ready'}
+        statusIsError={Boolean(error || progress.phase === 'error')}
+        onLibrary={() => goHome()}
+        onOpen={openFolder}
+        onShortcuts={() => setShortcutSheetOpen(true)}
+      />
 
       <ShortcutSheet open={shortcutSheetOpen} onClose={() => setShortcutSheetOpen(false)} />
     </div>
