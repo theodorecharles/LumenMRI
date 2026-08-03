@@ -30,6 +30,7 @@ import {
   sourcePointToPlane,
 } from './lib/mpr'
 import { isReconstructionReady } from './lib/reconstructVolume'
+import { installPwaViewportDiagnostics } from './lib/pwaViewportDiagnostics'
 import { compositeCompareSlicePng, exportCapturePng, type CaptureExportResult } from './lib/sliceCapture'
 import {
   mapRelativeSliceIndex,
@@ -84,6 +85,11 @@ const FULL_CROP: CropBounds = {
 type ViewerLayout = 'volume' | 'slice' | 'split' | 'compare'
 
 export default function App() {
+  useEffect(() => {
+    if (import.meta.env.DEV) return installPwaViewportDiagnostics()
+    return undefined
+  }, [])
+
   const session = useViewerSession()
   const {
     inputRef,
