@@ -78,6 +78,8 @@ npm audit --omit=dev
 
 End-to-end QA opens both included studies and captures the library, 2D, split, shoulder, and mobile views under the ignored `artifacts/` directory.
 
+The [mobile PWA shell checklist](docs/pwa-mobile-validation.md) covers route, scroll, modal, lifecycle, keyboard, rotation, suspension, safe-area, and physical iOS validation. Browser emulation alone does not establish installed-PWA behavior on iOS.
+
 To rebuild the included normalized assets from the original studies:
 
 ```bash
