@@ -3117,6 +3117,8 @@ button:disabled {
 .rotate-label { margin-top: 3px; }
 
 .bottom-nav {
+  --bottom-nav-block-padding: 5px;
+
   position: relative;
   inset: auto;
   z-index: 20;
@@ -3127,7 +3129,8 @@ button:disabled {
   min-height: 40px;
   flex: none;
   gap: 20px;
-  padding: 5px 12px;
+  padding: var(--bottom-nav-block-padding) 12px
+    calc(var(--bottom-nav-block-padding) + env(safe-area-inset-bottom, 0px));
   color: #3f555e;
   font-family: 'DM Mono', monospace;
   font-size: 7.5px;
@@ -3298,9 +3301,11 @@ button:disabled {
   }
 
   .bottom-nav {
+    --bottom-nav-block-padding: 4px;
+
     grid-template-columns: 1fr;
     min-height: 52px;
-    padding: 4px 8px;
+    padding-inline: 8px;
   }
 
   .bottom-nav-actions {
