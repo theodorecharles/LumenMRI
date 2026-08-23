@@ -92,6 +92,6 @@ Only normalized 8-bit intensity data, dimensions, spacing, orientation, and non-
 
 ## Deployment
 
-Pushes to `main` build and deploy the static app through GitHub Pages. The workflow configures the Vite base path for `https://theodorecharles.github.io/LumenMRI/`.
+Pushes to `main` build and deploy the static app through GitHub Pages. The workflow configures the Vite base path for `https://builtbyted.github.io/LumenMRI/`.
 
 Lumen is a visualization workspace, not a certified medical device, and must not be used for diagnosis or treatment decisions.
